@@ -301,7 +301,10 @@ describe("DesktopCompanion", () => {
       "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\orders_codex\n",
       "utf8",
     );
-    const runContinue = vi.fn().mockResolvedValue("restore");
+    const runContinue = vi.fn().mockResolvedValue({
+      delivery: "restore",
+      selectedTarget: "orders_codex",
+    });
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
       pollIntervalMs: 60_000,
@@ -315,9 +318,10 @@ describe("DesktopCompanion", () => {
     await companion.start();
     await companion.continueConversation("conversation-1");
 
-    expect(runContinue).toHaveBeenCalledWith("Codex", []);
+    expect(runContinue).toHaveBeenCalledWith("Codex", ["orders_codex"]);
     expect(companion.getStatus().note).toContain("conversation-1");
     expect(companion.getStatus().note).toContain("fallback visible");
+    expect(companion.getStatus().note).toContain("UI target: orders_codex");
   });
 
   it("selects a unique project before continuing an inactive thread", async () => {

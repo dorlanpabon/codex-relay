@@ -812,10 +812,6 @@ export class DesktopCompanion extends EventEmitter {
   private resolveContinueTargetLabels(
     conversation: ConversationRuntimeState,
   ): DesktopContinueTarget | undefined {
-    if (conversation.isActive) {
-      return undefined;
-    }
-
     const labels: string[] = [];
     const threadTitle = hasMeaningfulThreadTitle(conversation)
       ? conversation.threadTitle?.trim()
