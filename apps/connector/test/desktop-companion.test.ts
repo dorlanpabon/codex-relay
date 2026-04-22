@@ -185,6 +185,102 @@ describe("DesktopCompanion", () => {
     );
   });
 
+  it("hydrates conversations from every desktop log file instead of only the latest one", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const oldDayDir = join(tempDir, "2026", "04", "21");
+    const newDayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(oldDayDir, { recursive: true });
+    mkdirSync(newDayDir, { recursive: true });
+    writeFileSync(
+      join(oldDayDir, "old.log"),
+      [
+        "2026-04-21T12:01:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\orders_codex",
+        "2026-04-21T12:03:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1 cwd=D:\\xampp\\htdocs\\orders_codex",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    writeFileSync(
+      join(newDayDir, "new.log"),
+      [
+        "2026-04-22T12:06:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\tv_controller",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue: vi.fn().mockResolvedValue("focus"),
+      now: () => new Date("2026-04-22T14:00:00.000Z"),
+    });
+
+    await companion.start();
+
+    expect(companion.getStatus().conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          workspacePath: "D:/xampp/htdocs/orders_codex",
+          status: "waiting_manual",
+        }),
+        expect.objectContaining({
+          conversationId: "conversation-2",
+          workspacePath: "D:/xampp/htdocs/tv_controller",
+          status: "running",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps the first known workspace for a thread when another repo logs a newer hint", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    const logPath = join(dayDir, "codex.log");
+    writeFileSync(
+      logPath,
+      [
+        "2026-04-22T12:00:00.000Z info [git] git.command.complete cwd=D:\\xampp\\htdocs\\orders_codex durationMs=168",
+        "2026-04-22T12:00:05.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start",
+        "2026-04-22T12:05:00.000Z info [git] git.command.complete cwd=D:\\xampp\\htdocs\\tv_controller durationMs=168",
+        "2026-04-22T12:05:05.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start",
+        "2026-04-22T12:05:08.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue: vi.fn().mockResolvedValue("focus"),
+      now: () => new Date("2026-04-22T14:00:00.000Z"),
+    });
+
+    await companion.start();
+
+    expect(companion.getStatus().conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          workspacePath: "D:/xampp/htdocs/orders_codex",
+        }),
+        expect.objectContaining({
+          conversationId: "conversation-2",
+          workspacePath: "D:/xampp/htdocs/tv_controller",
+        }),
+      ]),
+    );
+  });
+
   it("exposes the packaged desktop logs path by default", () => {
     expect(defaultCodexDesktopLogsRoot()).toContain("OpenAI.Codex_2p2nqsd0c76g0");
   });

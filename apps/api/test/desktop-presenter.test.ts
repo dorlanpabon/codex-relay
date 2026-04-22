@@ -80,12 +80,13 @@ describe("desktop-presenter", () => {
     const text = formatDesktopStatusText(view);
 
     expect(text).toContain("<b>Codex Desktop</b> | <b>DESKTOP-DEV</b>");
-    expect(text).toContain("<b>Vista:</b> prioridad | 2/2");
+    expect(text).toContain("<b>Vista:</b> prioridad | 2/3");
     expect(text).toContain("<b>Activa:</b> #1 orders_codex");
     expect(text).toContain("<b>#1 orders_codex</b> <i>activa</i>");
     expect(text).toContain("<b>Ruta:</b> <code>D:/xampp/htdocs/orders_codex</code>");
     expect(text).toContain("<b>Comandos:</b>\n/desktop_continue conversa\n/desktop_inspect conversa");
     expect(text).toContain("Se ocultaron 1 registros historicos del mismo repo.");
+    expect(text).toContain("Se agruparon 1 conversaciones del mismo repo en esta vista.");
     expect(text).not.toContain("conversation-2");
   });
 
@@ -106,11 +107,20 @@ describe("desktop-presenter", () => {
   it("supports explicit status filters", () => {
     const inactiveView = buildDesktopStatusView(status, meta, "inactive");
     const pendingView = buildDesktopStatusView(status, meta, "pending");
+    const allView = buildDesktopStatusView(status, meta, "all");
 
     expect(inactiveView.filter).toBe("inactive");
-    expect(inactiveView.conversationViews).toHaveLength(1);
-    expect(inactiveView.conversationViews[0]?.title).toBe("agent_dropshipping");
-    expect(pendingView.conversationViews).toHaveLength(0);
+    expect(inactiveView.conversationViews).toHaveLength(2);
+    expect(inactiveView.conversationViews[0]?.title).toBe("orders_codex");
+    expect(inactiveView.conversationViews[1]?.title).toBe("agent_dropshipping");
+    expect(pendingView.conversationViews).toHaveLength(1);
+    expect(pendingView.conversationViews[0]?.title).toBe("orders_codex");
+    expect(allView.conversationViews).toHaveLength(3);
+    expect(allView.conversationViews.map((conversation) => conversation.conversationId)).toEqual([
+      "conversation-2",
+      "conversation-1",
+      "conversation-3",
+    ]);
     expect(parseDesktopStatusFilter("inactivos")).toBe("inactive");
     expect(parseDesktopStatusFilter("all")).toBe("all");
   });

@@ -39,6 +39,13 @@ type LogFileSnapshot = {
   mtimeMs: number;
 };
 
+type WorkspaceHint = {
+  path: string;
+  occurredAtMs: number;
+};
+
+const WORKSPACE_HINT_FRESHNESS_MS = 15_000;
+
 const scanLogFiles = (root: string): LogFileSnapshot[] => {
   const snapshots: LogFileSnapshot[] = [];
   const queue = [root];
@@ -69,16 +76,7 @@ const scanLogFiles = (root: string): LogFileSnapshot[] => {
     }
   }
 
-  return snapshots.sort((left, right) => right.mtimeMs - left.mtimeMs);
-};
-
-const readTail = (filePath: string, maxBytes: number): { text: string; size: number } => {
-  const buffer = readFileSync(filePath);
-  const start = Math.max(0, buffer.length - maxBytes);
-  return {
-    text: buffer.subarray(start).toString("utf8"),
-    size: buffer.length,
-  };
+  return snapshots.sort((left, right) => left.mtimeMs - right.mtimeMs);
 };
 
 const readRange = (filePath: string, offset: number): { text: string; size: number } => {
@@ -269,8 +267,8 @@ export class DesktopCompanion extends EventEmitter {
     windowTitle: string,
   ) => Promise<DesktopContinueDelivery | void>;
   private timer: NodeJS.Timeout | null = null;
-  private cursor: { path: string; offset: number } | null = null;
-  private latestWorkspacePath?: string;
+  private readonly fileOffsets = new Map<string, number>();
+  private latestWorkspaceHint?: WorkspaceHint;
   private readonly state: DesktopRuntimeState;
 
   constructor(private readonly options: DesktopCompanionOptions) {
@@ -396,8 +394,8 @@ export class DesktopCompanion extends EventEmitter {
       return;
     }
 
-    const latest = scanLogFiles(this.options.logsRoot)[0];
-    if (!latest) {
+    const logFiles = scanLogFiles(this.options.logsRoot);
+    if (logFiles.length === 0) {
       this.state.note = "No se encontraron logs recientes de Codex Desktop.";
       if (JSON.stringify(this.state) !== before) {
         this.emitStatus();
@@ -405,20 +403,23 @@ export class DesktopCompanion extends EventEmitter {
       return;
     }
 
-    if (!this.cursor || this.cursor.path !== latest.path) {
-      const tail = readTail(latest.path, 262144);
-      this.cursor = {
-        path: latest.path,
-        offset: tail.size,
-      };
-      await this.processChunk(tail.text);
-    } else if (latest.size < this.cursor.offset) {
-      const range = readRange(latest.path, 0);
-      this.cursor.offset = range.size;
-      await this.processChunk(range.text);
-    } else if (latest.size > this.cursor.offset) {
-      const range = readRange(latest.path, this.cursor.offset);
-      this.cursor.offset = range.size;
+    const livePaths = new Set(logFiles.map((logFile) => logFile.path));
+    for (const trackedPath of this.fileOffsets.keys()) {
+      if (!livePaths.has(trackedPath)) {
+        this.fileOffsets.delete(trackedPath);
+      }
+    }
+
+    for (const logFile of logFiles) {
+      const previousOffset = this.fileOffsets.get(logFile.path);
+      const offset =
+        previousOffset === undefined || logFile.size < previousOffset ? 0 : previousOffset;
+      if (logFile.size === offset) {
+        continue;
+      }
+
+      const range = readRange(logFile.path, offset);
+      this.fileOffsets.set(logFile.path, range.size);
       await this.processChunk(range.text);
     }
 
@@ -464,14 +465,17 @@ export class DesktopCompanion extends EventEmitter {
       }
 
       if (signal.kind === "workspace.hint") {
-        this.latestWorkspacePath = signal.workspacePath;
+        this.latestWorkspaceHint = {
+          path: signal.workspacePath,
+          occurredAtMs: parseTimestamp(signal.occurredAt) || this.now().getTime(),
+        };
         continue;
       }
 
       if (signal.kind === "turn.start") {
         const conversation = this.getOrCreateConversation(signal.conversationId);
         const signalTimestamp = signal.occurredAt ?? this.now().toISOString();
-        conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
+        this.assignWorkspacePath(conversation, signal.workspacePath, signalTimestamp);
         this.setActiveConversation(signal.conversationId);
         conversation.status = "running";
         conversation.awaitingApproval = false;
@@ -483,8 +487,8 @@ export class DesktopCompanion extends EventEmitter {
       }
 
       const conversation = this.getOrCreateConversation(signal.conversationId);
-      conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
       const completedAt = signal.occurredAt ?? this.now().toISOString();
+      this.assignWorkspacePath(conversation, signal.workspacePath, completedAt);
       conversation.lastTurnCompletedAt = completedAt;
       if (!this.state.activeConversationId) {
         this.setActiveConversation(signal.conversationId);
@@ -625,6 +629,33 @@ export class DesktopCompanion extends EventEmitter {
   ): void {
     conversation.note = note;
     conversation.lastMessagePreview = note;
+  }
+
+  private assignWorkspacePath(
+    conversation: ConversationRuntimeState,
+    explicitWorkspacePath: string | undefined,
+    occurredAt: string,
+  ): void {
+    if (explicitWorkspacePath) {
+      conversation.workspacePath = explicitWorkspacePath;
+      return;
+    }
+
+    if (conversation.workspacePath) {
+      return;
+    }
+
+    const hint = this.latestWorkspaceHint;
+    if (!hint) {
+      return;
+    }
+
+    const occurredAtMs = parseTimestamp(occurredAt);
+    if (!occurredAtMs || occurredAtMs - hint.occurredAtMs > WORKSPACE_HINT_FRESHNESS_MS) {
+      return;
+    }
+
+    conversation.workspacePath = hint.path;
   }
 
   private recomputeDerivedState(): void {

@@ -46,6 +46,7 @@ export type DesktopStatusView = {
   note: string | undefined;
   filter: DesktopStatusFilter;
   totalConversationCount: number;
+  matchedConversationCount: number;
 };
 
 export type DesktopStatusFilter = "priority" | "working" | "inactive" | "pending" | "all";
@@ -55,6 +56,11 @@ type ConversationSeed = Omit<
   "index" | "commandText" | "inspectCommandText" | "summaryLine"
 > & {
   summaryLineRaw: string | undefined;
+};
+
+type ConversationGroups = {
+  raw: ConversationSeed[];
+  grouped: ConversationSeed[][];
 };
 
 const normalizeLookupValue = (value: string): string =>
@@ -359,10 +365,10 @@ const collapseConversationGroup = (group: ConversationSeed[]): ConversationSeed[
   ];
 };
 
-const buildConversationLookup = (
+const buildConversationGroups = (
   status: DesktopStatus,
   meta: DesktopConnectorMeta,
-): DesktopConversationView[] => {
+): ConversationGroups => {
   const projects = meta.projects.map((project) => ({
     ...project,
     normalizedRepoPath: normalizeWorkspacePath(project.repoPath),
@@ -383,11 +389,15 @@ const buildConversationLookup = (
     }
   }
 
-  const visibleSeeds = [...groupedConversations.values()]
-    .flatMap((group) => collapseConversationGroup(group))
-    .sort(compareDisplayPriority);
+  return {
+    raw: rawConversations,
+    grouped: [...groupedConversations.values()],
+  };
+};
 
-  const conversationViews = visibleSeeds.map((conversation, index) => ({
+const createConversationViews = (seeds: ConversationSeed[]): DesktopConversationView[] => {
+  const sortedSeeds = [...seeds].sort(compareDisplayPriority);
+  const conversationViews = sortedSeeds.map((conversation, index) => ({
     ...conversation,
     index: index + 1,
     summaryLine: conversation.summaryLineRaw,
@@ -399,6 +409,53 @@ const buildConversationLookup = (
     ...conversation,
     summaryLine: rewriteDesktopNote(conversation.summaryLine, conversationViews),
   }));
+};
+
+const matchesFilter = (conversation: ConversationSeed, filter: DesktopStatusFilter): boolean => {
+  switch (filter) {
+    case "working":
+      return conversation.hasWorkingSource;
+    case "inactive":
+      return conversation.hasInactiveSource;
+    case "pending":
+      return conversation.hasPendingSource;
+    case "all":
+    case "priority":
+    default:
+      return true;
+  }
+};
+
+const buildVisibleSeeds = (
+  groups: ConversationGroups,
+  filter: DesktopStatusFilter,
+): ConversationSeed[] => {
+  if (filter === "all") {
+    return groups.raw;
+  }
+
+  return groups.grouped.flatMap((group) => {
+    const matched = group.filter((conversation) => matchesFilter(conversation, filter));
+    if (matched.length === 0) {
+      return [];
+    }
+
+    return collapseConversationGroup(matched);
+  });
+};
+
+const countMatchedConversations = (
+  groups: ConversationGroups,
+  filter: DesktopStatusFilter,
+): number => {
+  if (filter === "all" || filter === "priority") {
+    return groups.raw.length;
+  }
+
+  return groups.grouped.reduce(
+    (total, group) => total + group.filter((conversation) => matchesFilter(conversation, filter)).length,
+    0,
+  );
 };
 
 export const rewriteDesktopNote = (
@@ -425,18 +482,15 @@ export const buildDesktopStatusView = (
   meta: DesktopConnectorMeta,
   filter: DesktopStatusFilter = "priority",
 ): DesktopStatusView => {
-  const allConversationViews = buildConversationLookup(status, meta);
-  const activeConversation = allConversationViews.find((conversation) =>
+  const groups = buildConversationGroups(status, meta);
+  const conversationViews = createConversationViews(buildVisibleSeeds(groups, filter));
+  const totalConversationCount = groups.raw.length;
+  const matchedConversationCount = countMatchedConversations(groups, filter);
+  const activeConversation = conversationViews.find((conversation) =>
     conversation.sourceConversationIds.includes(status.activeConversationId ?? ""),
   );
-  const lastCompletedConversation = allConversationViews.find((conversation) =>
+  const lastCompletedConversation = conversationViews.find((conversation) =>
     conversation.sourceConversationIds.includes(status.lastCompletedConversationId ?? ""),
-  );
-  const conversationViews = filterDesktopConversationViews(allConversationViews, filter).map(
-    (conversation, index) => ({
-      ...conversation,
-      index: index + 1,
-    }),
   );
 
   return {
@@ -444,38 +498,18 @@ export const buildDesktopStatusView = (
     summaryLines: [
       `Companion: ${status.desktopAutomationReady ? "listo" : "no listo"}`,
       `Autopilot: ${status.autopilotEnabled ? "encendido" : "apagado"} | Auto-turnos: ${status.autoContinueCount}/${status.maxAutoTurns}`,
-      `Vista: ${desktopStatusFilterLabel(filter)} | ${conversationViews.length}/${allConversationViews.length}`,
+      `Vista: ${desktopStatusFilterLabel(filter)} | ${conversationViews.length}/${totalConversationCount}`,
       activeConversation ? `Activa: #${activeConversation.index} ${activeConversation.title}` : null,
       lastCompletedConversation
         ? `Ultima completa: #${lastCompletedConversation.index} ${lastCompletedConversation.title}`
         : null,
     ].filter((line): line is string => Boolean(line)),
     conversationViews,
-    note: rewriteDesktopNote(status.note, allConversationViews),
+    note: rewriteDesktopNote(status.note, conversationViews),
     filter,
-    totalConversationCount: allConversationViews.length,
+    totalConversationCount,
+    matchedConversationCount,
   };
-};
-
-const isWorkingConversation = (conversation: DesktopConversationView): boolean =>
-  conversation.hasWorkingSource;
-
-const filterDesktopConversationViews = (
-  conversations: DesktopConversationView[],
-  filter: DesktopStatusFilter,
-): DesktopConversationView[] => {
-  switch (filter) {
-    case "all":
-      return conversations;
-    case "working":
-      return conversations.filter((conversation) => isWorkingConversation(conversation));
-    case "inactive":
-      return conversations.filter((conversation) => conversation.hasInactiveSource);
-    case "pending":
-      return conversations.filter((conversation) => conversation.hasPendingSource);
-    default:
-      return conversations;
-  }
 };
 
 const formatMetaLine = (label: string, value: string): string =>
@@ -540,13 +574,17 @@ const formatConversationBlock = (conversation: DesktopConversationView): string 
     .join("\n");
 
 export const formatDesktopStatusText = (view: DesktopStatusView): string => {
-  const visibleLimit = view.filter === "all" ? 12 : 8;
+  const visibleLimit = view.filter === "all" ? 20 : 8;
   const visibleConversations = view.conversationViews.slice(0, visibleLimit);
   const conversationBlocks = visibleConversations.map((conversation) =>
     formatConversationBlock(conversation),
   );
   const hiddenConversationCount = Math.max(0, view.conversationViews.length - visibleConversations.length);
-  const outsideFilterCount = Math.max(0, view.totalConversationCount - view.conversationViews.length);
+  const collapsedConversationCount = Math.max(
+    0,
+    view.matchedConversationCount - view.conversationViews.length,
+  );
+  const outsideFilterCount = Math.max(0, view.totalConversationCount - view.matchedConversationCount);
 
   return [
     `<b>Codex Desktop</b> | <b>${escapeHtml(view.machineLabel)}</b>`,
@@ -556,6 +594,9 @@ export const formatDesktopStatusText = (view: DesktopStatusView): string => {
     ...conversationBlocks.flatMap((block, index) => (index === 0 ? [block] : ["", block])),
     outsideFilterCount > 0
       ? `\n<i>Hay ${outsideFilterCount} conversaciones fuera del filtro actual.</i>`
+      : null,
+    collapsedConversationCount > 0
+      ? `\n<i>Se agruparon ${collapsedConversationCount} conversaciones del mismo repo en esta vista.</i>`
       : null,
     hiddenConversationCount > 0
       ? `\n<i>Hay ${hiddenConversationCount} conversaciones adicionales en esta vista.</i>`
@@ -612,7 +653,7 @@ export const resolveDesktopConversationReference = (
     return null;
   }
 
-  const conversationViews = buildConversationLookup(status, meta);
+  const conversationViews = buildDesktopStatusView(status, meta).conversationViews;
   if (/^\d+$/.test(normalizedReference)) {
     return conversationViews[Number(normalizedReference) - 1] ?? null;
   }
