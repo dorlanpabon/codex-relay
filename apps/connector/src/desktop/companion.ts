@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import {
   existsSync,
   readdirSync,
+  realpathSync,
   readFileSync,
   statSync,
 } from "node:fs";
@@ -26,6 +27,7 @@ export type DesktopContinueExecution = {
 
 type DesktopCompanionOptions = {
   logsRoot: string;
+  threadsDbPath?: string;
   pollIntervalMs: number;
   defaultMaxAutoTurns: number;
   windowTitle: string;
@@ -36,10 +38,13 @@ type DesktopCompanionOptions = {
     windowTitle: string,
     targetLabels?: string[],
   ) => Promise<DesktopContinueExecution | DesktopContinueDelivery | void>;
+  readThreadIndex?: (dbPath: string) => Promise<DesktopThreadIndexEntry[]>;
 };
 
 type DesktopRuntimeState = Omit<DesktopStatus, "connectorId" | "connected">;
-type ConversationRuntimeState = DesktopConversation;
+type ConversationRuntimeState = DesktopConversation & {
+  metadataUpdatedAtMs?: number;
+};
 
 type LogFileSnapshot = {
   path: string;
@@ -54,6 +59,13 @@ type WorkspaceHint = {
 
 type DesktopContinueTarget = {
   labels: string[];
+};
+
+type DesktopThreadIndexEntry = {
+  conversationId: string;
+  workspacePath?: string;
+  threadTitle?: string;
+  updatedAtMs?: number;
 };
 
 const WORKSPACE_HINT_FRESHNESS_MS = 15_000;
@@ -524,15 +536,91 @@ export const defaultCodexDesktopLogsRoot = (): string =>
     "Logs",
   );
 
-const conversationActivityRank = (conversation: ConversationRuntimeState): number =>
-  [
-    conversation.lastContinueSentAt,
-    conversation.lastTurnCompletedAt,
-    conversation.lastTurnStartedAt,
-  ]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => Date.parse(value))
-    .find((value) => Number.isFinite(value)) ?? 0;
+export const defaultCodexThreadStateDbPath = (): string => join(os.homedir(), ".codex", "state_5.sqlite");
+
+const normalizeWorkspacePath = (value: string): string =>
+  value
+    .replace(/^\\\\\?\\/, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+$/, "")
+    .replace(/\/\.git$/, "");
+
+const normalizeThreadTitle = (value?: string | null): string | undefined => {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized ? normalized : undefined;
+};
+
+const createThreadIndexFingerprint = (dbPath: string): string | null => {
+  if (!existsSync(dbPath)) {
+    return null;
+  }
+
+  const dbStat = statSync(dbPath);
+  const walPath = `${dbPath}-wal`;
+  if (!existsSync(walPath)) {
+    return `${dbPath}:${dbStat.size}:${dbStat.mtimeMs}`;
+  }
+
+  const walStat = statSync(walPath);
+  return `${dbPath}:${dbStat.size}:${dbStat.mtimeMs}:${walStat.size}:${walStat.mtimeMs}`;
+};
+
+const readThreadIndexFromSqlite = async (dbPath: string): Promise<DesktopThreadIndexEntry[]> => {
+  if (!existsSync(dbPath)) {
+    return [];
+  }
+
+  const resolvedPath = realpathSync(dbPath);
+  const sqlite = await import("node:sqlite");
+  const database = new sqlite.DatabaseSync(resolvedPath, {
+    readOnly: true,
+    timeout: 50,
+  });
+
+  try {
+    const statement = database.prepare(`
+      SELECT id, cwd, title, updated_at
+      FROM threads
+      WHERE archived = 0
+      ORDER BY updated_at DESC
+    `);
+
+    return (
+      statement.all() as Array<{
+        id?: string;
+        cwd?: string | null;
+        title?: string | null;
+        updated_at?: number | null;
+      }>
+    )
+      .map((row) => {
+        const threadTitle = normalizeThreadTitle(row.title);
+        return {
+          conversationId: row.id ?? "",
+          ...(row.cwd ? { workspacePath: normalizeWorkspacePath(row.cwd) } : {}),
+          ...(threadTitle ? { threadTitle } : {}),
+          ...(typeof row.updated_at === "number" ? { updatedAtMs: row.updated_at * 1000 } : {}),
+        };
+      })
+      .filter((row) => Boolean(row.conversationId));
+  } finally {
+    database.close();
+  }
+};
+
+const conversationActivityRank = (conversation: ConversationRuntimeState): number => {
+  const eventTimestamp =
+    [
+      conversation.lastContinueSentAt,
+      conversation.lastTurnCompletedAt,
+      conversation.lastTurnStartedAt,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => Date.parse(value))
+      .find((value) => Number.isFinite(value)) ?? 0;
+
+  return eventTimestamp || conversation.metadataUpdatedAtMs || 0;
+};
 
 const parseTimestamp = (value?: string): number => {
   if (!value) {
@@ -592,13 +680,16 @@ export class DesktopCompanion extends EventEmitter {
   private readonly platform: NodeJS.Platform;
   private readonly now: () => Date;
   private readonly continueMode: DesktopContinueMode;
+  private readonly threadsDbPath: string;
   private readonly runContinueCommand: (
     windowTitle: string,
     targetLabels?: string[],
   ) => Promise<DesktopContinueExecution | DesktopContinueDelivery | void>;
+  private readonly readThreadIndex: (dbPath: string) => Promise<DesktopThreadIndexEntry[]>;
   private timer: NodeJS.Timeout | null = null;
   private readonly fileOffsets = new Map<string, number>();
   private latestWorkspaceHint?: WorkspaceHint;
+  private lastThreadIndexFingerprint: string | null = null;
   private readonly state: DesktopRuntimeState;
 
   constructor(private readonly options: DesktopCompanionOptions) {
@@ -606,10 +697,12 @@ export class DesktopCompanion extends EventEmitter {
     this.platform = options.platform ?? process.platform;
     this.now = options.now ?? (() => new Date());
     this.continueMode = options.continueMode ?? "hybrid";
+    this.threadsDbPath = options.threadsDbPath ?? defaultCodexThreadStateDbPath();
     this.runContinueCommand =
       options.runContinue ??
       ((windowTitle, targetLabels) =>
         runPowerShellContinue(windowTitle, this.continueMode, targetLabels));
+    this.readThreadIndex = options.readThreadIndex ?? readThreadIndexFromSqlite;
     this.state = {
       desktopAutomationReady: false,
       autopilotEnabled: false,
@@ -727,9 +820,12 @@ export class DesktopCompanion extends EventEmitter {
       return;
     }
 
+    await this.hydrateThreadIndex();
+
     const logFiles = scanLogFiles(this.options.logsRoot);
     if (logFiles.length === 0) {
       this.state.note = "No se encontraron logs recientes de Codex Desktop.";
+      this.recomputeDerivedState();
       if (JSON.stringify(this.state) !== before) {
         this.emitStatus();
       }
@@ -759,6 +855,39 @@ export class DesktopCompanion extends EventEmitter {
     if (JSON.stringify(this.state) !== before) {
       this.emitStatus();
     }
+  }
+
+  private async hydrateThreadIndex(): Promise<void> {
+    const fingerprint = createThreadIndexFingerprint(this.threadsDbPath);
+    if (!fingerprint || fingerprint === this.lastThreadIndexFingerprint) {
+      return;
+    }
+
+    try {
+      const entries = await this.readThreadIndex(this.threadsDbPath);
+      this.lastThreadIndexFingerprint = fingerprint;
+      for (const entry of entries) {
+        const conversation = this.getOrCreateConversation(entry.conversationId);
+        if (entry.workspacePath) {
+          conversation.workspacePath = entry.workspacePath;
+        }
+        if (
+          entry.threadTitle &&
+          (!conversation.threadTitle || !hasMeaningfulThreadTitle(conversation))
+        ) {
+          conversation.threadTitle = entry.threadTitle;
+        }
+        if (entry.updatedAtMs) {
+          conversation.metadataUpdatedAtMs = Math.max(
+            conversation.metadataUpdatedAtMs ?? 0,
+            entry.updatedAtMs,
+          );
+        }
+      }
+    } catch {
+      return;
+    }
+    this.recomputeDerivedState();
   }
 
   private refreshReadiness(): void {

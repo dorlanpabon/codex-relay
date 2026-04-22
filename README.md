@@ -77,6 +77,7 @@ Variables utiles del conector:
 - Si no lo defines, el conector usa `%LOCALAPPDATA%\\CodexRelay\\connector-state.json` en Windows o `~/.codex-relay/CodexRelay/connector-state.json` como fallback
 - `DESKTOP_AUTOMATION_ENABLED`: habilita el companion para Codex Desktop en Windows
 - `DESKTOP_LOGS_ROOT`: ruta manual a `%LOCALAPPDATA%\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\Codex\\Logs`
+- `DESKTOP_THREADS_DB_PATH`: ruta opcional a `~/.codex/state_5.sqlite`, usada para hidratar `threadId`, `cwd` y titulo desde la base local de Codex
 - `DESKTOP_POLL_INTERVAL_MS`: frecuencia de lectura de logs
 - `DESKTOP_AUTOPILOT_MAX_TURNS`: limite por defecto de auto-continue del companion
 - `DESKTOP_WINDOW_TITLE`: titulo de ventana usado como fallback si no encuentra el PID principal

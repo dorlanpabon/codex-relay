@@ -137,6 +137,7 @@ const main = async (): Promise<void> => {
   const desktopCompanion = config.DESKTOP_AUTOMATION_ENABLED
     ? new DesktopCompanion({
         logsRoot: config.DESKTOP_LOGS_ROOT,
+        threadsDbPath: config.DESKTOP_THREADS_DB_PATH,
         pollIntervalMs: config.DESKTOP_POLL_INTERVAL_MS,
         defaultMaxAutoTurns: config.DESKTOP_AUTOPILOT_MAX_TURNS,
         windowTitle: config.DESKTOP_WINDOW_TITLE,

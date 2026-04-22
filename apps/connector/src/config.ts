@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   defaultCodexDesktopLogsRoot,
+  defaultCodexThreadStateDbPath,
   type DesktopContinueMode,
 } from "./desktop/companion.js";
 import { loadEnvFiles } from "./env/load-env.js";
@@ -23,6 +24,7 @@ const ConfigSchema = z.object({
   STATE_FILE_PATH: z.string().default(defaultStateFilePath()),
   DESKTOP_AUTOMATION_ENABLED: z.coerce.boolean().default(true),
   DESKTOP_LOGS_ROOT: z.string().default(defaultCodexDesktopLogsRoot()),
+  DESKTOP_THREADS_DB_PATH: z.string().default(defaultCodexThreadStateDbPath()),
   DESKTOP_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
   DESKTOP_AUTOPILOT_MAX_TURNS: z.coerce.number().int().positive().default(8),
   DESKTOP_WINDOW_TITLE: z.string().default("Codex"),

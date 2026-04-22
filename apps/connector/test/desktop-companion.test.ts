@@ -8,6 +8,7 @@ import {
   buildPowerShellContinueScript,
   DesktopCompanion,
   defaultCodexDesktopLogsRoot,
+  defaultCodexThreadStateDbPath,
   resolveContinueSequence,
 } from "../src/desktop/companion.js";
 
@@ -39,6 +40,7 @@ describe("DesktopCompanion", () => {
     const runContinue = vi.fn().mockResolvedValue(undefined);
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -100,6 +102,7 @@ describe("DesktopCompanion", () => {
     const runContinue = vi.fn().mockResolvedValue("focus");
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -156,6 +159,7 @@ describe("DesktopCompanion", () => {
     );
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -211,6 +215,7 @@ describe("DesktopCompanion", () => {
     );
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -257,6 +262,7 @@ describe("DesktopCompanion", () => {
     );
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -285,6 +291,11 @@ describe("DesktopCompanion", () => {
     expect(defaultCodexDesktopLogsRoot()).toContain("OpenAI.Codex_2p2nqsd0c76g0");
   });
 
+  it("exposes the local Codex thread database path by default", () => {
+    expect(defaultCodexThreadStateDbPath()).toContain(".codex");
+    expect(defaultCodexThreadStateDbPath()).toContain("state_5.sqlite");
+  });
+
   it("uses a hybrid continue sequence by default", () => {
     expect(resolveContinueSequence("hybrid")).toEqual([false, true]);
     expect(resolveContinueSequence("focus")).toEqual([false]);
@@ -307,6 +318,7 @@ describe("DesktopCompanion", () => {
     });
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -345,6 +357,7 @@ describe("DesktopCompanion", () => {
     });
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -359,6 +372,117 @@ describe("DesktopCompanion", () => {
     expect(runContinue).toHaveBeenCalledWith("Codex", ["my_home_smart"]);
     expect(companion.getStatus().activeConversationId).toBe("conversation-1");
     expect(companion.getStatus().note).toContain("UI target: my_home_smart");
+  });
+
+  it("hydrates thread metadata from the Codex thread database", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      "2026-04-22T12:05:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\extension_zajuna_automatization\n",
+      "utf8",
+    );
+    const fakeDbPath = join(tempDir, "state_5.sqlite");
+    writeFileSync(fakeDbPath, "", "utf8");
+    const readThreadIndex = vi.fn().mockResolvedValue([
+      {
+        conversationId: "conversation-1",
+        workspacePath: "D:/Usuario/Descargas/test_sena_inventarios",
+        threadTitle: "CREAME UN PROYECTO EN JAVA CON SERVLETS",
+        updatedAtMs: Date.parse("2026-04-22T11:59:00.000Z"),
+      },
+      {
+        conversationId: "conversation-2",
+        workspacePath: "D:/xampp/htdocs/extension_zajuna_automatization",
+        threadTitle: "Automatizar Sajuna con IA",
+        updatedAtMs: Date.parse("2026-04-22T12:05:00.000Z"),
+      },
+    ]);
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      threadsDbPath: fakeDbPath,
+      readThreadIndex,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue: vi.fn().mockResolvedValue("focus"),
+      now: () => new Date("2026-04-22T12:06:00.000Z"),
+    });
+
+    await companion.start();
+
+    expect(readThreadIndex).toHaveBeenCalledWith(fakeDbPath);
+    expect(companion.getStatus().conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          workspacePath: "D:/Usuario/Descargas/test_sena_inventarios",
+          threadTitle: "CREAME UN PROYECTO EN JAVA CON SERVLETS",
+          status: "idle",
+        }),
+        expect.objectContaining({
+          conversationId: "conversation-2",
+          workspacePath: "D:/xampp/htdocs/extension_zajuna_automatization",
+          threadTitle: "Automatizar Sajuna con IA",
+          status: "running",
+        }),
+      ]),
+    );
+  });
+
+  it("prefers a unique thread title from the Codex thread database when selecting continue target", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      [
+        "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\Usuario\\Descargas\\dropshipping_codex",
+        "2026-04-22T12:01:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1 cwd=D:\\Usuario\\Descargas\\dropshipping_codex",
+        "2026-04-22T12:02:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\open_source",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const fakeDbPath = join(tempDir, "state_5.sqlite");
+    writeFileSync(fakeDbPath, "", "utf8");
+    const runContinue = vi.fn().mockResolvedValue("focus");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      threadsDbPath: fakeDbPath,
+      readThreadIndex: vi.fn().mockResolvedValue([
+        {
+          conversationId: "conversation-1",
+          workspacePath: "D:/Usuario/Descargas/dropshipping_codex",
+          threadTitle: "Agente Personal de Dropshipping",
+          updatedAtMs: Date.parse("2026-04-22T12:01:00.000Z"),
+        },
+        {
+          conversationId: "conversation-2",
+          workspacePath: "D:/xampp/htdocs/open_source",
+          threadTitle: "Codex Relay",
+          updatedAtMs: Date.parse("2026-04-22T12:02:00.000Z"),
+        },
+      ]),
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:05:00.000Z"),
+    });
+
+    await companion.start();
+    await companion.continueConversation("conversation-1");
+
+    expect(runContinue).toHaveBeenCalledWith("Codex", [
+      "Agente Personal de Dropshipping",
+      "dropshipping_codex",
+    ]);
   });
 
   it("blocks continue when multiple tracked threads share the same project label", async () => {
@@ -379,6 +503,7 @@ describe("DesktopCompanion", () => {
     const runContinue = vi.fn().mockResolvedValue("focus");
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
@@ -415,6 +540,7 @@ describe("DesktopCompanion", () => {
     const runContinue = vi.fn().mockResolvedValue("focus");
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
+      threadsDbPath: join(tempDir, "state_5.sqlite"),
       pollIntervalMs: 60_000,
       defaultMaxAutoTurns: 3,
       platform: "win32",
