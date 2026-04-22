@@ -250,6 +250,7 @@ export class DesktopCompanion extends EventEmitter {
   ) => Promise<DesktopContinueDelivery | void>;
   private timer: NodeJS.Timeout | null = null;
   private cursor: { path: string; offset: number } | null = null;
+  private latestWorkspacePath?: string;
   private readonly state: DesktopRuntimeState;
 
   constructor(private readonly options: DesktopCompanionOptions) {
@@ -442,8 +443,14 @@ export class DesktopCompanion extends EventEmitter {
         continue;
       }
 
+      if (signal.kind === "workspace.hint") {
+        this.latestWorkspacePath = signal.workspacePath;
+        continue;
+      }
+
       if (signal.kind === "turn.start") {
         const conversation = this.getOrCreateConversation(signal.conversationId);
+        conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
         this.setActiveConversation(signal.conversationId);
         conversation.status = "running";
         conversation.awaitingApproval = false;
@@ -455,6 +462,7 @@ export class DesktopCompanion extends EventEmitter {
       }
 
       const conversation = this.getOrCreateConversation(signal.conversationId);
+      conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
       const completedAt = this.now().toISOString();
       conversation.lastTurnCompletedAt = completedAt;
       if (!this.state.activeConversationId) {

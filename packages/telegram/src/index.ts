@@ -39,7 +39,16 @@ export type TelegramAction =
         | "autopilot_on"
         | "autopilot_off";
       conversationId?: string;
+    }
+  | {
+      kind: "desktop.refresh";
+      connectorId?: string;
     };
+
+export type DesktopKeyboardConversation = {
+  conversationId: string;
+  label: string;
+};
 
 export const buildSessionKeyboard = (sessionId: string): InlineKeyboardMarkup => ({
   inline_keyboard: [
@@ -67,15 +76,23 @@ export const buildApprovalKeyboard = (
 
 export const buildDesktopKeyboard = (
   status: Pick<DesktopStatus, "connectorId" | "autopilotEnabled">,
-  conversationId?: string,
+  options?: {
+    primaryConversationId?: string;
+    primaryContinueLabel?: string;
+    conversations?: DesktopKeyboardConversation[];
+  },
 ): InlineKeyboardMarkup => ({
   inline_keyboard: [
     [
       {
-        text: conversationId ? `Continuar ${conversationId.slice(0, 8)}` : "Continuar Desktop",
-        callback_data: conversationId
-          ? `deskc:${conversationId}`
+        text: options?.primaryContinueLabel ?? "Continuar activa",
+        callback_data: options?.primaryConversationId
+          ? `deskc:${options.primaryConversationId}`
           : `deskcontinue:${status.connectorId}`,
+      },
+      {
+        text: "Actualizar",
+        callback_data: `deskstatus:${status.connectorId}`,
       },
     ],
     [
@@ -84,6 +101,12 @@ export const buildDesktopKeyboard = (
         callback_data: `${status.autopilotEnabled ? "deskautooff" : "deskautoon"}:${status.connectorId}`,
       },
     ],
+    ...(options?.conversations ?? []).map((conversation) => [
+      {
+        text: conversation.label,
+        callback_data: `deskc:${conversation.conversationId}`,
+      },
+    ]),
   ],
 });
 
@@ -139,6 +162,13 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
       kind: "desktop.command",
       connectorId,
       command: "continue_active",
+    };
+  }
+
+  if (input.startsWith("deskstatus:")) {
+    return {
+      kind: "desktop.refresh",
+      connectorId: input.slice("deskstatus:".length),
     };
   }
 

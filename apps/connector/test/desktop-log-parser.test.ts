@@ -24,4 +24,15 @@ describe("parseDesktopLogLine", () => {
       conversationId: "conversation-1",
     });
   });
+
+  it("extracts workspace hints and normalizes .git suffixes", () => {
+    expect(
+      parseDesktopLogLine(
+        '2026-04-21T05:55:43.278Z warning [git] git.command.complete cwd=D:\\Usuario\\Descargas\\dropshipping_local\\.git durationMs=168'
+      ),
+    ).toEqual({
+      kind: "workspace.hint",
+      workspacePath: "D:/Usuario/Descargas/dropshipping_local",
+    });
+  });
 });

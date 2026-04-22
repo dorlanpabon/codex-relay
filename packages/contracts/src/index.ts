@@ -167,6 +167,7 @@ export const DesktopConversationSchema = z.object({
   isActive: z.boolean().default(false),
   awaitingApproval: z.boolean().default(false),
   autoContinueCount: z.number().int().min(0).default(0),
+  workspacePath: z.string().min(1).optional(),
   lastTurnStartedAt: z.string().datetime().optional(),
   lastTurnCompletedAt: z.string().datetime().optional(),
   lastContinueSentAt: z.string().datetime().optional(),
