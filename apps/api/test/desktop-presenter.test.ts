@@ -17,7 +17,7 @@ describe("desktop-presenter", () => {
     autoContinueCount: 0,
     activeConversationId: "conversation-1",
     lastCompletedConversationId: "conversation-2",
-    note: "Turn completo en conversation-2. Esperando aprobacion remota.",
+    note: "Turn detectado en conversation-2.",
     conversations: [
       {
         conversationId: "conversation-1",
@@ -25,9 +25,9 @@ describe("desktop-presenter", () => {
         isActive: true,
         awaitingApproval: false,
         autoContinueCount: 0,
-        threadTitle: "Corregir login SENA",
         workspacePath: "D:/xampp/htdocs/orders_codex",
-        lastMessagePreview: "Estoy validando el flujo de login y ajustando cookies.",
+        lastMessagePreview: "Estoy revisando el merge de main y ajustando apps.",
+        lastTurnStartedAt: "2026-04-22T12:00:00.000Z",
       },
       {
         conversationId: "conversation-2",
@@ -35,9 +35,20 @@ describe("desktop-presenter", () => {
         isActive: false,
         awaitingApproval: true,
         autoContinueCount: 0,
+        workspacePath: "D:/xampp/htdocs/orders_codex",
+        note: "Turn completo en conversation-2. Esperando aprobacion remota.",
+        lastTurnCompletedAt: "2026-04-22T11:58:00.000Z",
+      },
+      {
+        conversationId: "conversation-3",
+        status: "running" as const,
+        isActive: false,
+        awaitingApproval: false,
+        autoContinueCount: 0,
         workspacePath: "D:/xampp/htdocs/agent_dropshipping",
         threadTitle: "Pulir onboarding",
-        note: "Turn completo en conversation-2. Esperando aprobacion remota.",
+        lastMessagePreview: "Estoy ordenando el flujo inicial y afinando textos.",
+        lastTurnStartedAt: "2026-04-22T10:00:00.000Z",
       },
     ],
   };
@@ -50,43 +61,56 @@ describe("desktop-presenter", () => {
     ],
   };
 
-  it("formats desktop status with thread labels, summaries and command hints", () => {
+  it("collapses duplicate repo conversations with synthetic thread ids", () => {
+    const view = buildDesktopStatusView(status, meta);
+
+    expect(view.conversationViews).toHaveLength(2);
+    expect(view.conversationViews[0]?.title).toBe("orders_codex");
+    expect(view.conversationViews[0]?.hiddenDuplicateCount).toBe(1);
+    expect(view.conversationViews[0]?.sourceConversationIds).toEqual([
+      "conversation-1",
+      "conversation-2",
+    ]);
+    expect(view.note).toContain("#1 orders_codex");
+  });
+
+  it("formats desktop status as HTML with clearer structure", () => {
     const view = buildDesktopStatusView(status, meta);
     const text = formatDesktopStatusText(view);
 
-    expect(text).toContain("Codex Desktop | DESKTOP-DEV");
-    expect(text).toContain("Activa: #1 orders_codex");
-    expect(text).toContain("#2 agent_dropshipping | requiere accion");
-    expect(text).toContain("Thread: Corregir login SENA");
-    expect(text).toContain("Ultimo estado: Estoy validando el flujo de login");
-    expect(text).toContain("Acciones: /desktop_continue 2 | /desktop_inspect 2");
+    expect(text).toContain("<b>Codex Desktop</b> | <b>DESKTOP-DEV</b>");
+    expect(text).toContain("<b>Activa:</b> #1 orders_codex");
+    expect(text).toContain("<b>#1 orders_codex</b> <i>activa</i>");
+    expect(text).toContain("<b>Ruta:</b> <code>D:/xampp/htdocs/orders_codex</code>");
+    expect(text).toContain("<code>/desktop_continue 1</code> | <code>/desktop_inspect 1</code>");
+    expect(text).toContain("Se ocultaron 1 registros historicos del mismo repo.");
     expect(text).not.toContain("conversation-2");
   });
 
-  it("formats an inspect view with thread and command details", () => {
+  it("formats an inspect view with thread details and commands", () => {
     const view = buildDesktopStatusView(status, meta);
     const inspectText = formatDesktopConversationInspectText(
       view.machineLabel,
-      view.conversationViews[0]!,
+      view.conversationViews[1]!,
     );
 
-    expect(inspectText).toContain("Thread #1 orders_codex");
-    expect(inspectText).toContain("Thread: Corregir login SENA");
-    expect(inspectText).toContain("Acciones: /desktop_continue 1 | /desktop_inspect 1");
+    expect(inspectText).toContain("<b>Thread #2</b> agent_dropshipping");
+    expect(inspectText).toContain("<b>Thread:</b> Pulir onboarding");
+    expect(inspectText).toContain("<code>/desktop_continue 2</code> | <code>/desktop_inspect 2</code>");
   });
 
-  it("resolves conversation references by index, project name and thread name", () => {
-    expect(resolveDesktopConversationReference(status, meta, "2")?.conversationId).toBe(
-      "conversation-2",
+  it("resolves conversation references by visible index, repo name and hidden alias id", () => {
+    expect(resolveDesktopConversationReference(status, meta, "1")?.conversationId).toBe(
+      "conversation-1",
     );
-    expect(
-      resolveDesktopConversationReference(status, meta, "agent_dropshipping")?.conversationId,
-    ).toBe("conversation-2");
+    expect(resolveDesktopConversationReference(status, meta, "orders_codex")?.conversationId).toBe(
+      "conversation-1",
+    );
+    expect(resolveDesktopConversationReference(status, meta, "conversation-2")?.conversationId).toBe(
+      "conversation-1",
+    );
     expect(
       resolveDesktopConversationReference(status, meta, "pulir onboarding")?.conversationId,
-    ).toBe("conversation-2");
-    expect(resolveDesktopConversationReference(status, meta, "onboarding")?.conversationId).toBe(
-      "conversation-2",
-    );
+    ).toBe("conversation-3");
   });
 });

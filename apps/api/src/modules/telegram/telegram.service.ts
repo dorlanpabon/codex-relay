@@ -48,6 +48,7 @@ type TelegramUpdate = {
 
 type TelegramSendMessageOptions = {
   reply_markup?: unknown;
+  parse_mode?: "HTML";
 };
 
 @Injectable()
@@ -731,8 +732,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     const presentation = await this.buildDesktopStatusPresentation(this.config.DEFAULT_USER_ID, status);
-    const conversation = presentation.conversationViews.find(
-      (item) => item.conversationId === conversationId,
+    const conversation = presentation.conversationViews.find((item) =>
+      item.sourceConversationIds.includes(conversationId),
     );
 
     await this.sendMessage(
@@ -781,8 +782,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     const presentation = await this.buildDesktopStatusPresentation(this.config.DEFAULT_USER_ID, status);
-    const conversation = presentation.conversationViews.find(
-      (item) => item.conversationId === conversationId,
+    const conversation = presentation.conversationViews.find((item) =>
+      item.sourceConversationIds.includes(conversationId),
     );
 
     await this.sendMessage(
@@ -819,6 +820,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       presentation.conversationViews.find((conversation) => conversation.awaitingApproval)
         ?.conversationId ?? status.activeConversationId;
     await this.sendMessage(chatId, formatDesktopStatusText(presentation), {
+      parse_mode: "HTML",
       reply_markup: buildDesktopKeyboard(status, {
         primaryContinueLabel:
           presentation.conversationViews.find((conversation) => conversation.awaitingApproval)
@@ -848,8 +850,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     const presentation = await this.buildDesktopStatusPresentation(userId, status);
-    const conversation = presentation.conversationViews.find(
-      (item) => item.conversationId === conversationId,
+    const conversation = presentation.conversationViews.find((item) =>
+      item.sourceConversationIds.includes(conversationId),
     );
     if (!conversation) {
       await this.sendMessage(chatId, "No encontre ese thread en el estado actual.");
@@ -865,8 +867,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     presentation: DesktopStatusView,
     conversationId: string,
   ): Promise<void> {
-    const conversation = presentation.conversationViews.find(
-      (item) => item.conversationId === conversationId,
+    const conversation = presentation.conversationViews.find((item) =>
+      item.sourceConversationIds.includes(conversationId),
     );
     if (!conversation) {
       await this.sendMessage(chatId, "No encontre ese thread en el estado actual.");
@@ -877,6 +879,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       chatId,
       formatDesktopConversationInspectText(presentation.machineLabel, conversation),
       {
+        parse_mode: "HTML",
         reply_markup: buildDesktopKeyboard(status, {
           primaryConversationId: conversation.conversationId,
           primaryContinueLabel: this.buildDesktopPrimaryContinueLabel(conversation),
@@ -889,9 +892,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private buildDesktopConversationButtons(presentation: DesktopStatusView) {
     return presentation.conversationViews.slice(0, 4).map((conversation) => ({
       conversationId: conversation.conversationId,
-      contextLabel: this.buildDesktopContextLabel(conversation).slice(0, 48),
-      continueLabel: `Continuar #${conversation.index}`.slice(0, 24),
-      inspectLabel: "Ver detalle",
+      contextLabel: this.buildDesktopContextLabel(conversation).slice(0, 52),
+      continueLabel: this.buildDesktopActionLabel("Continuar", conversation, 30),
+      inspectLabel: this.buildDesktopActionLabel("Detalle", conversation, 28),
     }));
   }
 
@@ -900,13 +903,24 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private buildDesktopContextLabel(conversation: DesktopStatusView["conversationViews"][number]) {
-    const status =
+    const parts = [`#${conversation.index} ${conversation.title}`];
+    if (conversation.hasMeaningfulThreadLabel) {
+      parts.push(conversation.threadLabel);
+    }
+
+    parts.push(
       conversation.awaitingApproval
         ? "pendiente"
         : conversation.isActive
           ? "activa"
-          : conversation.statusLabel;
-    return `#${conversation.index} ${conversation.title} · ${conversation.threadLabel} · ${status}`;
+          : conversation.statusLabel,
+    );
+
+    if (conversation.hiddenDuplicateCount > 0) {
+      parts.push(`+${conversation.hiddenDuplicateCount} ocultos`);
+    }
+
+    return parts.join(" | ");
   }
 
   private buildDesktopActionLabel(
@@ -914,7 +928,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     conversation: DesktopStatusView["conversationViews"][number],
     maxLength: number,
   ) {
-    const label = `${action} ${conversation.title} · ${conversation.threadLabel}`;
+    const detail = conversation.hasMeaningfulThreadLabel
+      ? `${conversation.title} | ${conversation.threadLabel}`
+      : conversation.title;
+    const label = `${action} ${detail}`;
     return label.length <= maxLength ? label : `${label.slice(0, Math.max(0, maxLength - 3))}...`;
   }
 
@@ -952,6 +969,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     await this.telegramRequest("sendMessage", {
       chat_id: chatId,
       text,
+      ...(options?.parse_mode ? { parse_mode: options.parse_mode } : {}),
       ...(options?.reply_markup ? { reply_markup: options.reply_markup } : {}),
     });
   }

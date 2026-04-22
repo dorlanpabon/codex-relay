@@ -11,13 +11,13 @@ describe("@codex-relay/telegram", () => {
       },
       {
         primaryConversationId: "conversation-1",
-        primaryContinueLabel: "Continuar #1",
+        primaryContinueLabel: "Continuar orders_codex",
         conversations: [
           {
             conversationId: "conversation-1",
-            contextLabel: "#1 orders_codex · 019db192 · pendiente",
-            continueLabel: "Continuar #1",
-            inspectLabel: "Ver detalle",
+            contextLabel: "#1 orders_codex | pendiente | +1 oculto",
+            continueLabel: "Continuar orders_codex",
+            inspectLabel: "Detalle orders_codex",
           },
         ],
       },
@@ -25,9 +25,9 @@ describe("@codex-relay/telegram", () => {
 
     expect(keyboard.inline_keyboard[0]?.[0]?.callback_data).toBe("deskc:conversation-1");
     expect(keyboard.inline_keyboard[0]?.[1]?.callback_data).toBe("deskstatus:connector-1");
-    expect(keyboard.inline_keyboard[2]?.[0]?.text).toBe("#1 orders_codex · 019db192 · pendiente");
+    expect(keyboard.inline_keyboard[2]?.[0]?.text).toBe("#1 orders_codex | pendiente | +1 oculto");
     expect(keyboard.inline_keyboard[2]?.[0]?.callback_data).toBe("deski:conversation-1");
-    expect(keyboard.inline_keyboard[3]?.[0]?.text).toBe("Continuar #1");
+    expect(keyboard.inline_keyboard[3]?.[0]?.text).toBe("Continuar orders_codex");
     expect(keyboard.inline_keyboard[3]?.[1]?.callback_data).toBe("deski:conversation-1");
     expect(keyboard.inline_keyboard[0]?.[0]?.callback_data.length).toBeLessThanOrEqual(64);
   });

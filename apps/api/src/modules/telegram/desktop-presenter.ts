@@ -15,6 +15,7 @@ export type DesktopConversationView = {
   shortId: string;
   title: string;
   threadLabel: string;
+  hasMeaningfulThreadLabel: boolean;
   projectName: string | undefined;
   folderName: string | undefined;
   workspacePath: string | undefined;
@@ -24,6 +25,9 @@ export type DesktopConversationView = {
   statusLabel: string;
   isActive: boolean;
   awaitingApproval: boolean;
+  hiddenDuplicateCount: number;
+  sourceConversationIds: string[];
+  sourceShortIds: string[];
   commandText: string;
   inspectCommandText: string;
   lastTurnStartedAt: string | undefined;
@@ -39,8 +43,21 @@ export type DesktopStatusView = {
   note: string | undefined;
 };
 
+type ConversationSeed = Omit<
+  DesktopConversationView,
+  "index" | "commandText" | "inspectCommandText" | "summaryLine"
+> & {
+  summaryLineRaw: string | undefined;
+};
+
 const normalizeLookupValue = (value: string): string =>
   value.trim().toLowerCase().replace(/[_\s-]+/g, "");
+
+const escapeHtml = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 
 export const normalizeWorkspacePath = (value?: string): string | undefined => {
   if (!value) {
@@ -98,6 +115,35 @@ const formatDesktopTimestamp = (value?: string): string | undefined => {
   }).format(parsed);
 };
 
+const parseTimestamp = (value?: string): number => {
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const isMeaningfulThreadLabel = (conversation: DesktopConversation): boolean => {
+  const value = conversation.threadTitle?.trim();
+  if (!value) {
+    return false;
+  }
+
+  const normalized = normalizeLookupValue(value);
+  if (!normalized) {
+    return false;
+  }
+
+  const shortId = conversation.conversationId.slice(0, 8).toLowerCase();
+  const normalizedConversationId = normalizeLookupValue(conversation.conversationId);
+  return (
+    normalized !== shortId &&
+    normalized !== normalizedConversationId &&
+    !/^thread[0-9a-f]{8,}$/i.test(normalized)
+  );
+};
+
 const buildSummaryText = (conversation: DesktopConversation): string | undefined => {
   const summary =
     conversation.lastMessagePreview ??
@@ -114,7 +160,137 @@ const buildSummaryText = (conversation: DesktopConversation): string | undefined
               ? "Thread requiere revision."
               : undefined);
 
-  return summary ? shorten(summary, 112) : undefined;
+  return summary ? shorten(summary, 140) : undefined;
+};
+
+const latestActivityTimestamp = (conversation: ConversationSeed): number =>
+  Math.max(
+    parseTimestamp(conversation.lastTurnCompletedAt),
+    parseTimestamp(conversation.lastContinueSentAt),
+    parseTimestamp(conversation.lastTurnStartedAt),
+  );
+
+const compareRepresentativePriority = (
+  left: ConversationSeed,
+  right: ConversationSeed,
+): number => {
+  const activeDiff = Number(right.isActive) - Number(left.isActive);
+  if (activeDiff !== 0) {
+    return activeDiff;
+  }
+
+  const approvalDiff = Number(right.awaitingApproval) - Number(left.awaitingApproval);
+  if (approvalDiff !== 0) {
+    return approvalDiff;
+  }
+
+  const activityDiff = latestActivityTimestamp(right) - latestActivityTimestamp(left);
+  if (activityDiff !== 0) {
+    return activityDiff;
+  }
+
+  return left.conversationId.localeCompare(right.conversationId);
+};
+
+const compareDisplayPriority = (left: ConversationSeed, right: ConversationSeed): number => {
+  const approvalDiff = Number(right.awaitingApproval) - Number(left.awaitingApproval);
+  if (approvalDiff !== 0) {
+    return approvalDiff;
+  }
+
+  const activeDiff = Number(right.isActive) - Number(left.isActive);
+  if (activeDiff !== 0) {
+    return activeDiff;
+  }
+
+  const activityDiff = latestActivityTimestamp(right) - latestActivityTimestamp(left);
+  if (activityDiff !== 0) {
+    return activityDiff;
+  }
+
+  return left.title.localeCompare(right.title);
+};
+
+const buildConversationGroupKey = (conversation: ConversationSeed): string =>
+  conversation.workspacePath
+    ? `workspace:${normalizeLookupValue(conversation.workspacePath)}`
+    : conversation.projectName
+      ? `project:${normalizeLookupValue(conversation.projectName)}`
+      : conversation.folderName
+        ? `folder:${normalizeLookupValue(conversation.folderName)}`
+        : `conversation:${conversation.conversationId}`;
+
+const chooseRepresentative = (conversations: ConversationSeed[]): ConversationSeed =>
+  [...conversations].sort(compareRepresentativePriority)[0]!;
+
+const createConversationSeed = (
+  conversation: DesktopConversation,
+  projects: Array<{
+    name: string;
+    repoPath: string;
+    normalizedRepoPath: string | undefined;
+  }>,
+): ConversationSeed => {
+  const workspacePath = normalizeWorkspacePath(conversation.workspacePath);
+  const folderName = folderNameFromPath(workspacePath);
+  const project = projects.find((candidate) => candidate.normalizedRepoPath === workspacePath);
+  const hasMeaningfulThreadLabel = isMeaningfulThreadLabel(conversation);
+  const threadLabel = hasMeaningfulThreadLabel
+    ? conversation.threadTitle!.trim()
+    : conversation.conversationId.slice(0, 8);
+  const title = project?.name || folderName || `Thread ${conversation.conversationId.slice(0, 8)}`;
+
+  return {
+    conversationId: conversation.conversationId,
+    shortId: conversation.conversationId.slice(0, 8),
+    title,
+    threadLabel,
+    hasMeaningfulThreadLabel,
+    projectName: project?.name,
+    folderName,
+    workspacePath,
+    threadLine: hasMeaningfulThreadLabel ? `Thread: ${threadLabel}` : `Thread ID: ${threadLabel}`,
+    workspaceLine:
+      project && folderName && normalizeLookupValue(project.name) !== normalizeLookupValue(folderName)
+        ? `Carpeta: ${folderName}`
+        : !project && !folderName && workspacePath
+          ? `Ruta: ${shorten(workspacePath, 72)}`
+          : undefined,
+    summaryLineRaw: buildSummaryText(conversation),
+    statusLabel: statusLabel(conversation),
+    isActive: conversation.isActive,
+    awaitingApproval: conversation.awaitingApproval,
+    hiddenDuplicateCount: 0,
+    sourceConversationIds: [conversation.conversationId],
+    sourceShortIds: [conversation.conversationId.slice(0, 8)],
+    lastTurnStartedAt: conversation.lastTurnStartedAt,
+    lastTurnCompletedAt: conversation.lastTurnCompletedAt,
+    lastContinueSentAt: conversation.lastContinueSentAt,
+    lastContinueMode: conversation.lastContinueMode,
+  };
+};
+
+const collapseConversationGroup = (group: ConversationSeed[]): ConversationSeed[] => {
+  if (group.length <= 1) {
+    return group;
+  }
+
+  if (group.some((conversation) => conversation.hasMeaningfulThreadLabel)) {
+    return group;
+  }
+
+  const representative = chooseRepresentative(group);
+  return [
+    {
+      ...representative,
+      hiddenDuplicateCount: group.length - 1,
+      sourceConversationIds: group.map((conversation) => conversation.conversationId),
+      sourceShortIds: group.map((conversation) => conversation.shortId),
+      summaryLineRaw:
+        representative.summaryLineRaw ??
+        `Se detectaron ${group.length} registros del mismo repo; se muestra el mas util.`,
+    },
+  ];
 };
 
 const buildConversationLookup = (
@@ -126,45 +302,36 @@ const buildConversationLookup = (
     normalizedRepoPath: normalizeWorkspacePath(project.repoPath),
   }));
 
-  const conversations = status.conversations.map((conversation, index) => {
-    const workspacePath = normalizeWorkspacePath(conversation.workspacePath);
-    const folderName = folderNameFromPath(workspacePath);
-    const project = projects.find((candidate) => candidate.normalizedRepoPath === workspacePath);
-    const title = project?.name || folderName || `Thread ${conversation.conversationId.slice(0, 8)}`;
-    const threadLabel = conversation.threadTitle?.trim() || conversation.conversationId.slice(0, 8);
+  const rawConversations = status.conversations.map((conversation) =>
+    createConversationSeed(conversation, projects),
+  );
 
-    return {
-      index: index + 1,
-      conversationId: conversation.conversationId,
-      shortId: conversation.conversationId.slice(0, 8),
-      title,
-      threadLabel,
-      projectName: project?.name,
-      folderName,
-      workspacePath,
-      threadLine: `Thread: ${threadLabel}`,
-      workspaceLine:
-        project && folderName && normalizeLookupValue(project.name) !== normalizeLookupValue(folderName)
-          ? `Carpeta: ${folderName}`
-          : !project && !folderName && workspacePath
-            ? `Ruta: ${shorten(workspacePath, 64)}`
-            : undefined,
-      summaryLine: buildSummaryText(conversation),
-      statusLabel: statusLabel(conversation),
-      isActive: conversation.isActive,
-      awaitingApproval: conversation.awaitingApproval,
-      commandText: `/desktop_continue ${index + 1}`,
-      inspectCommandText: `/desktop_inspect ${index + 1}`,
-      lastTurnStartedAt: conversation.lastTurnStartedAt,
-      lastTurnCompletedAt: conversation.lastTurnCompletedAt,
-      lastContinueSentAt: conversation.lastContinueSentAt,
-      lastContinueMode: conversation.lastContinueMode,
-    };
-  });
+  const groupedConversations = new Map<string, ConversationSeed[]>();
+  for (const conversation of rawConversations) {
+    const key = buildConversationGroupKey(conversation);
+    const group = groupedConversations.get(key);
+    if (group) {
+      group.push(conversation);
+    } else {
+      groupedConversations.set(key, [conversation]);
+    }
+  }
 
-  return conversations.map((conversation) => ({
+  const visibleSeeds = [...groupedConversations.values()]
+    .flatMap((group) => collapseConversationGroup(group))
+    .sort(compareDisplayPriority);
+
+  const conversationViews = visibleSeeds.map((conversation, index) => ({
     ...conversation,
-    summaryLine: rewriteDesktopNote(conversation.summaryLine, conversations),
+    index: index + 1,
+    summaryLine: conversation.summaryLineRaw,
+    commandText: `/desktop_continue ${index + 1}`,
+    inspectCommandText: `/desktop_inspect ${index + 1}`,
+  }));
+
+  return conversationViews.map((conversation) => ({
+    ...conversation,
+    summaryLine: rewriteDesktopNote(conversation.summaryLine, conversationViews),
   }));
 };
 
@@ -176,11 +343,15 @@ export const rewriteDesktopNote = (
     return undefined;
   }
 
-  return conversations.reduce(
-    (current, conversation) =>
-      current.split(conversation.conversationId).join(`#${conversation.index} ${conversation.title}`),
-    note,
-  );
+  let rewritten = note;
+  for (const conversation of conversations) {
+    const replacement = `#${conversation.index} ${conversation.title}`;
+    for (const alias of conversation.sourceConversationIds) {
+      rewritten = rewritten.split(alias).join(replacement);
+    }
+  }
+
+  return rewritten;
 };
 
 export const buildDesktopStatusView = (
@@ -188,11 +359,11 @@ export const buildDesktopStatusView = (
   meta: DesktopConnectorMeta,
 ): DesktopStatusView => {
   const conversationViews = buildConversationLookup(status, meta);
-  const activeConversation = conversationViews.find(
-    (conversation) => conversation.conversationId === status.activeConversationId,
+  const activeConversation = conversationViews.find((conversation) =>
+    conversation.sourceConversationIds.includes(status.activeConversationId ?? ""),
   );
-  const lastCompletedConversation = conversationViews.find(
-    (conversation) => conversation.conversationId === status.lastCompletedConversationId,
+  const lastCompletedConversation = conversationViews.find((conversation) =>
+    conversation.sourceConversationIds.includes(status.lastCompletedConversationId ?? ""),
   );
 
   return {
@@ -210,26 +381,76 @@ export const buildDesktopStatusView = (
   };
 };
 
+const formatMetaLine = (label: string, value: string): string =>
+  `<b>${escapeHtml(label)}:</b> ${escapeHtml(value)}`;
+
+const formatSummaryLine = (line: string): string => {
+  const separatorIndex = line.indexOf(":");
+  if (separatorIndex <= 0) {
+    return escapeHtml(line);
+  }
+
+  return formatMetaLine(line.slice(0, separatorIndex), line.slice(separatorIndex + 1).trim());
+};
+
+const formatWorkspaceLine = (line: string): string => {
+  if (line.startsWith("Carpeta: ")) {
+    return formatMetaLine("Carpeta", line.slice("Carpeta: ".length));
+  }
+
+  if (line.startsWith("Ruta: ")) {
+    return `<b>Ruta:</b> <code>${escapeHtml(line.slice("Ruta: ".length))}</code>`;
+  }
+
+  return escapeHtml(line);
+};
+
+const formatConversationHeader = (conversation: DesktopConversationView): string => {
+  const flags = [
+    conversation.awaitingApproval ? "requiere accion" : null,
+    conversation.isActive ? "activa" : null,
+    !conversation.awaitingApproval && !conversation.isActive ? conversation.statusLabel : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return flags.length
+    ? `<b>#${conversation.index} ${escapeHtml(conversation.title)}</b> <i>${escapeHtml(flags.join(" | "))}</i>`
+    : `<b>#${conversation.index} ${escapeHtml(conversation.title)}</b>`;
+};
+
+const formatConversationBlock = (conversation: DesktopConversationView): string =>
+  [
+    formatConversationHeader(conversation),
+    conversation.hasMeaningfulThreadLabel
+      ? formatMetaLine("Thread", conversation.threadLabel)
+      : null,
+    formatMetaLine("Estado", conversation.statusLabel),
+    conversation.summaryLine ? formatMetaLine("Ultimo estado", conversation.summaryLine) : null,
+    conversation.workspaceLine ? formatWorkspaceLine(conversation.workspaceLine) : null,
+    conversation.workspacePath ? `<b>Ruta:</b> <code>${escapeHtml(conversation.workspacePath)}</code>` : null,
+    `<b>Acciones:</b> <code>${escapeHtml(conversation.commandText)}</code> | <code>${escapeHtml(conversation.inspectCommandText)}</code>`,
+    conversation.hiddenDuplicateCount > 0
+      ? `<i>Se ocultaron ${conversation.hiddenDuplicateCount} registros historicos del mismo repo.</i>`
+      : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+
 export const formatDesktopStatusText = (view: DesktopStatusView): string => {
-  const conversationBlocks = view.conversationViews.slice(0, 8).map((conversation) =>
-    [
-      `#${conversation.index} ${conversation.title}${conversation.isActive ? " | activa" : ""}${conversation.awaitingApproval ? " | requiere accion" : ""}`,
-      conversation.threadLine,
-      `Estado: ${conversation.statusLabel}`,
-      conversation.summaryLine ? `Ultimo estado: ${conversation.summaryLine}` : null,
-      conversation.workspaceLine,
-      `Acciones: ${conversation.commandText} | ${conversation.inspectCommandText}`,
-    ]
-      .filter(Boolean)
-      .join("\n"),
+  const visibleConversations = view.conversationViews.slice(0, 6);
+  const conversationBlocks = visibleConversations.map((conversation) =>
+    formatConversationBlock(conversation),
   );
+  const hiddenConversationCount = Math.max(0, view.conversationViews.length - visibleConversations.length);
 
   return [
-    `Codex Desktop | ${view.machineLabel}`,
-    ...view.summaryLines,
-    view.note ? `Nota: ${view.note}` : null,
+    `<b>Codex Desktop</b> | <b>${escapeHtml(view.machineLabel)}</b>`,
+    ...view.summaryLines.map((line) => formatSummaryLine(line)),
+    view.note ? formatMetaLine("Nota", view.note) : null,
     conversationBlocks.length ? "" : null,
-    ...conversationBlocks,
+    ...conversationBlocks.flatMap((block, index) => (index === 0 ? [block] : ["", block])),
+    hiddenConversationCount > 0
+      ? `\n<i>Hay ${hiddenConversationCount} conversaciones adicionales fuera de esta vista.</i>`
+      : null,
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -240,23 +461,34 @@ export const formatDesktopConversationInspectText = (
   conversation: DesktopConversationView,
 ): string =>
   [
-    `Codex Desktop | ${machineLabel}`,
-    `Thread #${conversation.index} ${conversation.title}`,
-    conversation.threadLine,
-    conversation.workspaceLine,
-    conversation.workspacePath ? `Ruta: ${conversation.workspacePath}` : null,
-    `Estado: ${conversation.statusLabel}`,
-    conversation.summaryLine ? `Ultimo estado: ${conversation.summaryLine}` : null,
+    `<b>Codex Desktop</b> | <b>${escapeHtml(machineLabel)}</b>`,
+    `<b>Thread #${conversation.index}</b> ${escapeHtml(conversation.title)}`,
+    conversation.hasMeaningfulThreadLabel
+      ? formatMetaLine("Thread", conversation.threadLabel)
+      : formatMetaLine("Thread ID", conversation.shortId),
+    formatMetaLine("Estado", conversation.statusLabel),
+    conversation.summaryLine ? formatMetaLine("Ultimo estado", conversation.summaryLine) : null,
+    conversation.workspaceLine ? formatWorkspaceLine(conversation.workspaceLine) : null,
+    conversation.workspacePath ? `<b>Ruta:</b> <code>${escapeHtml(conversation.workspacePath)}</code>` : null,
     conversation.lastTurnStartedAt
-      ? `Ultimo turn iniciado: ${formatDesktopTimestamp(conversation.lastTurnStartedAt)}`
+      ? formatMetaLine("Ultimo turn iniciado", formatDesktopTimestamp(conversation.lastTurnStartedAt)!)
       : null,
     conversation.lastTurnCompletedAt
-      ? `Ultimo turn completo: ${formatDesktopTimestamp(conversation.lastTurnCompletedAt)}`
+      ? formatMetaLine("Ultimo turn completo", formatDesktopTimestamp(conversation.lastTurnCompletedAt)!)
       : null,
     conversation.lastContinueSentAt
-      ? `Ultimo continue: ${formatDesktopTimestamp(conversation.lastContinueSentAt)}${conversation.lastContinueMode ? ` (${conversation.lastContinueMode})` : ""}`
+      ? formatMetaLine(
+          "Ultimo continue",
+          `${formatDesktopTimestamp(conversation.lastContinueSentAt)!}${conversation.lastContinueMode ? ` (${conversation.lastContinueMode})` : ""}`,
+        )
       : null,
-    `Acciones: ${conversation.commandText} | ${conversation.inspectCommandText}`,
+    conversation.hiddenDuplicateCount > 0
+      ? formatMetaLine(
+          "Historial oculto",
+          `${conversation.hiddenDuplicateCount} registros del mismo repo se unificaron en esta vista`,
+        )
+      : null,
+    `<b>Acciones:</b> <code>${escapeHtml(conversation.commandText)}</code> | <code>${escapeHtml(conversation.inspectCommandText)}</code>`,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -276,15 +508,15 @@ export const resolveDesktopConversationReference = (
     return conversationViews[Number(normalizedReference) - 1] ?? null;
   }
 
-  const exactIdMatch = conversationViews.find(
-    (conversation) => conversation.conversationId === normalizedReference,
+  const exactIdMatch = conversationViews.find((conversation) =>
+    conversation.sourceConversationIds.includes(normalizedReference),
   );
   if (exactIdMatch) {
     return exactIdMatch;
   }
 
   const prefixMatches = conversationViews.filter((conversation) =>
-    conversation.conversationId.startsWith(normalizedReference),
+    conversation.sourceConversationIds.some((alias) => alias.startsWith(normalizedReference)),
   );
   if (prefixMatches.length === 1) {
     return prefixMatches[0] ?? null;
@@ -298,6 +530,7 @@ export const resolveDesktopConversationReference = (
       conversation.folderName,
       conversation.workspacePath,
       conversation.shortId,
+      ...conversation.sourceShortIds,
     ].some((value) => value && normalizeLookupValue(value) === normalizedToken),
   );
 
@@ -312,6 +545,7 @@ export const resolveDesktopConversationReference = (
       conversation.folderName,
       conversation.workspacePath,
       conversation.shortId,
+      ...conversation.sourceShortIds,
     ].some((value) => {
       if (!value) {
         return false;
