@@ -2,6 +2,8 @@
 
 Codex Relay es un monorepo open-core para controlar sesiones locales de Codex desde un SaaS ligero y canales remotos como Telegram.
 
+Guia para contribuir: `CONTRIBUTING.md`
+
 ## Workspace
 
 - `apps/api`: NestJS + Prisma + BullMQ + WebSocket `/connectors`
@@ -27,6 +29,7 @@ pnpm install
 pnpm infra:up
 pnpm prisma:push
 pnpm prisma:generate
+pnpm check
 pnpm --filter @codex-relay/api dev
 pnpm --filter @codex-relay/web dev
 pnpm --filter @codex-relay/connector dev
@@ -40,7 +43,14 @@ Comandos operativos:
 - `pnpm local:down`: detiene API, panel y conector; tambien baja Postgres y Redis
 - `pnpm local:status`: muestra PIDs, logs y el resumen de `doctor`
 - `pnpm prisma:push`: aplica el esquema Prisma sobre la base local
+- `pnpm check`: corre `build`, `test` y `typecheck` en todo el monorepo como lo hace GitHub Actions
 - `pnpm doctor`: consulta `GET /health` y resume API, Postgres, Redis, Telegram, conectores y sesiones
+
+## CI
+
+- El repo publica una accion en `.github/workflows/ci.yml`
+- Se ejecuta en cada `push` a `main` y en cada `pull_request`
+- Valida `pnpm install --frozen-lockfile` y luego `pnpm check`
 
 Logs locales:
 
@@ -70,6 +80,7 @@ Variables utiles del conector:
 - `DESKTOP_POLL_INTERVAL_MS`: frecuencia de lectura de logs
 - `DESKTOP_AUTOPILOT_MAX_TURNS`: limite por defecto de auto-continue del companion
 - `DESKTOP_WINDOW_TITLE`: titulo de ventana usado como fallback si no encuentra el PID principal
+- `DESKTOP_CONTINUE_MODE`: `hybrid` intenta `continue` sin restaurar la ventana y solo usa foco visible si hace falta; `focus` evita ese fallback; `restore` mantiene el comportamiento agresivo
 
 ## Telegram
 
@@ -127,5 +138,5 @@ Notas:
 - La API expone `GET /connectors/desktop/status` y `POST /connectors/desktop/commands` para el companion de Windows.
 - El connector hub ya no pierde el estado `connected` por cierres de sockets viejos durante reconnects.
 - En Windows, `pnpm build` reutiliza el Prisma Client existente si `query_engine-windows.dll.node` esta bloqueado por un proceso del API ya corriendo.
-- En esta maquina, el companion detecta logs reales de Codex Desktop y ya puede enviar `continue` usando foco Win32 + teclado simulado. Si Windows bloquea el foco o la inyeccion de teclado, el estado desktop deja el error exacto en `note`.
+- En esta maquina, el companion detecta logs reales de Codex Desktop y ya puede enviar `continue` usando foco Win32 + teclado simulado. Por defecto primero intenta continuar sin restaurar la ventana; si Windows bloquea el foco o la inyeccion de teclado, cae al fallback visible y deja el detalle exacto en `note`.
 - No hay billing, multi-tenant duro ni canal de WhatsApp en esta version.

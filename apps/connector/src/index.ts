@@ -140,6 +140,7 @@ const main = async (): Promise<void> => {
         pollIntervalMs: config.DESKTOP_POLL_INTERVAL_MS,
         defaultMaxAutoTurns: config.DESKTOP_AUTOPILOT_MAX_TURNS,
         windowTitle: config.DESKTOP_WINDOW_TITLE,
+        continueMode: config.DESKTOP_CONTINUE_MODE,
       })
     : null;
 

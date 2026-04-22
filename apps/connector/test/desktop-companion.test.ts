@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildPowerShellContinueScript,
   DesktopCompanion,
   defaultCodexDesktopLogsRoot,
+  resolveContinueSequence,
 } from "../src/desktop/companion.js";
 
 describe("DesktopCompanion", () => {
@@ -69,5 +71,39 @@ describe("DesktopCompanion", () => {
 
   it("exposes the packaged desktop logs path by default", () => {
     expect(defaultCodexDesktopLogsRoot()).toContain("OpenAI.Codex_2p2nqsd0c76g0");
+  });
+
+  it("uses a hybrid continue sequence by default", () => {
+    expect(resolveContinueSequence("hybrid")).toEqual([false, true]);
+    expect(resolveContinueSequence("focus")).toEqual([false]);
+    expect(resolveContinueSequence("restore")).toEqual([true]);
+  });
+
+  it("marks visible fallback when continue needed a restore", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    mkdirSync(join(tempDir, "2026", "04", "22"), { recursive: true });
+    const runContinue = vi.fn().mockResolvedValue("restore");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:00:00.000Z"),
+    });
+
+    await companion.continueActive();
+
+    expect(runContinue).toHaveBeenCalledWith("Codex");
+    expect(companion.getStatus().note).toContain("fallback visible");
+  });
+
+  it("builds a focus-first PowerShell script in hybrid mode", () => {
+    const script = buildPowerShellContinueScript("Codex", "hybrid");
+
+    expect(script).toContain("if (Invoke-CodexRelayContinue $process $false)");
+    expect(script).toContain("elseif (Invoke-CodexRelayContinue $process $true)");
   });
 });

@@ -1,9 +1,14 @@
 import os from "node:os";
 import { z } from "zod";
 
-import { defaultCodexDesktopLogsRoot } from "./desktop/companion.js";
+import {
+  defaultCodexDesktopLogsRoot,
+  type DesktopContinueMode,
+} from "./desktop/companion.js";
 import { loadEnvFiles } from "./env/load-env.js";
 import { defaultStateFilePath } from "./state/connector-state.js";
+
+const desktopContinueModes = ["focus", "restore", "hybrid"] as const satisfies readonly DesktopContinueMode[];
 
 const ConfigSchema = z.object({
   API_BASE_URL: z.string().default("http://localhost:4000"),
@@ -21,6 +26,7 @@ const ConfigSchema = z.object({
   DESKTOP_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
   DESKTOP_AUTOPILOT_MAX_TURNS: z.coerce.number().int().positive().default(8),
   DESKTOP_WINDOW_TITLE: z.string().default("Codex"),
+  DESKTOP_CONTINUE_MODE: z.enum(desktopContinueModes).default("hybrid"),
 });
 
 export type ConnectorConfig = z.infer<typeof ConfigSchema>;

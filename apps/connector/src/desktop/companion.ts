@@ -12,14 +12,18 @@ import type { DesktopStatus } from "@codex-relay/contracts";
 
 import { parseDesktopLogLine } from "./log-parser.js";
 
+export type DesktopContinueMode = "focus" | "restore" | "hybrid";
+export type DesktopContinueDelivery = "focus" | "restore";
+
 type DesktopCompanionOptions = {
   logsRoot: string;
   pollIntervalMs: number;
   defaultMaxAutoTurns: number;
   windowTitle: string;
+  continueMode?: DesktopContinueMode;
   platform?: NodeJS.Platform;
   now?: () => Date;
-  runContinue?: (windowTitle: string) => Promise<void>;
+  runContinue?: (windowTitle: string) => Promise<DesktopContinueDelivery | void>;
 };
 
 type DesktopRuntimeState = Omit<DesktopStatus, "connectorId" | "connected">;
@@ -80,53 +84,102 @@ const readRange = (filePath: string, offset: number): { text: string; size: numb
   };
 };
 
-const runPowerShellContinue = async (windowTitle: string): Promise<void> =>
+export const resolveContinueSequence = (mode: DesktopContinueMode): boolean[] => {
+  switch (mode) {
+    case "focus":
+      return [false];
+    case "restore":
+      return [true];
+    case "hybrid":
+    default:
+      return [false, true];
+  }
+};
+
+export const buildPowerShellContinueScript = (
+  windowTitle: string,
+  mode: DesktopContinueMode,
+): string => {
+  const sequence = resolveContinueSequence(mode);
+  const attemptLines = sequence
+    .map((shouldRestore, index) => {
+      const label = shouldRestore ? "restore" : "focus";
+      const prefix = index === 0 ? "if" : "elseif";
+      const flag = shouldRestore ? "$true" : "$false";
+      return `${prefix} (Invoke-CodexRelayContinue $process ${flag}) { [Console]::Out.Write('${label}') }`;
+    })
+    .join("\n");
+
+  return [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "Add-Type -TypeDefinition @\"",
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public static class CodexRelayWin32 {",
+    "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
+    "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);",
+    "  [DllImport(\"kernel32.dll\")] public static extern uint GetCurrentThreadId();",
+    "  [DllImport(\"user32.dll\")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);",
+    "  [DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern bool SetFocus(IntPtr hWnd);",
+    "  [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);",
+    "}",
+    "\"@",
+    `$title = '${windowTitle.replace(/'/g, "''")}'`,
+    "function Resolve-CodexRelayProcess([string]$title) {",
+    "  $process = Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1",
+    "  if ($null -ne $process) { return $process }",
+    "  if ([string]::IsNullOrWhiteSpace($title)) { return $null }",
+    "  return Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -like ('*' + $title + '*') } | Sort-Object StartTime -Descending | Select-Object -First 1",
+    "}",
+    "function Invoke-CodexRelayContinue($process, [bool]$restoreWindow) {",
+    "  $hwnd = [IntPtr]::new([int64]$process.MainWindowHandle)",
+    "  if ($hwnd -eq [IntPtr]::Zero) { return $false }",
+    "  $foreground = [CodexRelayWin32]::GetForegroundWindow()",
+    "  $foregroundPid = [uint32]0",
+    "  $foregroundThread = [CodexRelayWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)",
+    "  $targetPid = [uint32]$process.Id",
+    "  $targetThread = [CodexRelayWin32]::GetWindowThreadProcessId($hwnd, [ref]$targetPid)",
+    "  $currentThread = [CodexRelayWin32]::GetCurrentThreadId()",
+    "  if ($foregroundThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $foregroundThread, $true) }",
+    "  if ($targetThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $targetThread, $true) }",
+    "  try {",
+    "    if ($restoreWindow) {",
+    "      [void][CodexRelayWin32]::ShowWindowAsync($hwnd, 9)",
+    "      [void][CodexRelayWin32]::BringWindowToTop($hwnd)",
+    "      Start-Sleep -Milliseconds 150",
+    "    }",
+    "    $setForeground = [CodexRelayWin32]::SetForegroundWindow($hwnd)",
+    "    [void][CodexRelayWin32]::SetFocus($hwnd)",
+    "    Start-Sleep -Milliseconds 350",
+    "    $foregroundAfter = [CodexRelayWin32]::GetForegroundWindow()",
+    "    $foregroundAfterPid = [uint32]0",
+    "    [void][CodexRelayWin32]::GetWindowThreadProcessId($foregroundAfter, [ref]$foregroundAfterPid)",
+    "    if ((-not $setForeground) -and $foregroundAfterPid -ne $process.Id) { return $false }",
+    "    Start-Sleep -Milliseconds 150",
+    "    [System.Windows.Forms.SendKeys]::SendWait('continue')",
+    "    Start-Sleep -Milliseconds 100",
+    "    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
+    "    return $true",
+    "  } finally {",
+    "    if ($targetThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $targetThread, $false) }",
+    "    if ($foregroundThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $foregroundThread, $false) }",
+    "  }",
+    "}",
+    "$process = Resolve-CodexRelayProcess $title",
+    "if ($null -eq $process) { throw 'Codex window not found' }",
+    attemptLines,
+    "else { throw 'Codex window not found' }",
+  ].join("\n");
+};
+
+const runPowerShellContinue = async (
+  windowTitle: string,
+  mode: DesktopContinueMode,
+): Promise<DesktopContinueDelivery> =>
   new Promise((resolve, reject) => {
-    const script = [
-      "Add-Type -AssemblyName System.Windows.Forms",
-      "Add-Type -TypeDefinition @\"",
-      "using System;",
-      "using System.Runtime.InteropServices;",
-      "public static class CodexRelayWin32 {",
-      "  [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
-      "  [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);",
-      "  [DllImport(\"kernel32.dll\")] public static extern uint GetCurrentThreadId();",
-      "  [DllImport(\"user32.dll\")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);",
-      "  [DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr hWnd);",
-      "  [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
-      "  [DllImport(\"user32.dll\")] public static extern bool SetFocus(IntPtr hWnd);",
-      "  [DllImport(\"user32.dll\")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);",
-      "}",
-      "\"@",
-      `$title = '${windowTitle.replace(/'/g, "''")}'`,
-      "$process = Get-Process Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1",
-      "if ($null -eq $process) { throw \"Codex window not found\" }",
-      "$hwnd = [IntPtr]::new([int64]$process.MainWindowHandle)",
-      "if ($hwnd -eq [IntPtr]::Zero) { throw \"Codex window handle not found\" }",
-      "$foreground = [CodexRelayWin32]::GetForegroundWindow()",
-      "$foregroundPid = [uint32]0",
-      "$foregroundThread = [CodexRelayWin32]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)",
-      "$targetPid = [uint32]$process.Id",
-      "$targetThread = [CodexRelayWin32]::GetWindowThreadProcessId($hwnd, [ref]$targetPid)",
-      "$currentThread = [CodexRelayWin32]::GetCurrentThreadId()",
-      "if ($foregroundThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $foregroundThread, $true) }",
-      "if ($targetThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $targetThread, $true) }",
-      "[void][CodexRelayWin32]::ShowWindowAsync($hwnd, 9)",
-      "[void][CodexRelayWin32]::BringWindowToTop($hwnd)",
-      "$setForeground = [CodexRelayWin32]::SetForegroundWindow($hwnd)",
-      "[void][CodexRelayWin32]::SetFocus($hwnd)",
-      "Start-Sleep -Milliseconds 350",
-      "$foregroundAfter = [CodexRelayWin32]::GetForegroundWindow()",
-      "$foregroundAfterPid = [uint32]0",
-      "[void][CodexRelayWin32]::GetWindowThreadProcessId($foregroundAfter, [ref]$foregroundAfterPid)",
-      "if ($targetThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $targetThread, $false) }",
-      "if ($foregroundThread -ne 0) { [void][CodexRelayWin32]::AttachThreadInput($currentThread, $foregroundThread, $false) }",
-      "if ((-not $setForeground) -and $foregroundAfterPid -ne $process.Id) { throw \"Codex window not found\" }",
-      "Start-Sleep -Milliseconds 150",
-      "[System.Windows.Forms.SendKeys]::SendWait('continue')",
-      "Start-Sleep -Milliseconds 100",
-      "[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')",
-    ].join("\n");
+    const script = buildPowerShellContinueScript(windowTitle, mode);
 
     const child = spawn(
       "powershell.exe",
@@ -143,6 +196,10 @@ const runPowerShellContinue = async (windowTitle: string): Promise<void> =>
       },
     );
 
+    let stdout = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
     let stderr = "";
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
@@ -150,7 +207,7 @@ const runPowerShellContinue = async (windowTitle: string): Promise<void> =>
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) {
-        resolve();
+        resolve(stdout.includes("restore") ? "restore" : "focus");
         return;
       }
 
@@ -172,7 +229,10 @@ export const defaultCodexDesktopLogsRoot = (): string =>
 export class DesktopCompanion extends EventEmitter {
   private readonly platform: NodeJS.Platform;
   private readonly now: () => Date;
-  private readonly runContinueCommand: (windowTitle: string) => Promise<void>;
+  private readonly continueMode: DesktopContinueMode;
+  private readonly runContinueCommand: (
+    windowTitle: string,
+  ) => Promise<DesktopContinueDelivery | void>;
   private timer: NodeJS.Timeout | null = null;
   private cursor: { path: string; offset: number } | null = null;
   private readonly state: DesktopRuntimeState;
@@ -181,7 +241,10 @@ export class DesktopCompanion extends EventEmitter {
     super();
     this.platform = options.platform ?? process.platform;
     this.now = options.now ?? (() => new Date());
-    this.runContinueCommand = options.runContinue ?? runPowerShellContinue;
+    this.continueMode = options.continueMode ?? "hybrid";
+    this.runContinueCommand =
+      options.runContinue ??
+      ((windowTitle) => runPowerShellContinue(windowTitle, this.continueMode));
     this.state = {
       desktopAutomationReady: false,
       autopilotEnabled: false,
@@ -216,8 +279,11 @@ export class DesktopCompanion extends EventEmitter {
   async continueActive(): Promise<DesktopRuntimeState> {
     this.ensureReady();
     try {
-      await this.runContinueCommand(this.options.windowTitle);
-      this.state.note = "Continue enviado a Codex Desktop.";
+      const delivery = await this.runContinueCommand(this.options.windowTitle);
+      this.state.note =
+        delivery === "restore"
+          ? "Continue enviado a Codex Desktop con fallback visible."
+          : "Continue enviado a Codex Desktop sin restaurar ventana.";
     } catch (error) {
       this.state.note = `No pude enviar continue: ${error instanceof Error ? error.message : String(error)}`;
       this.emitStatus();
@@ -357,9 +423,12 @@ export class DesktopCompanion extends EventEmitter {
       }
 
       try {
-        await this.runContinueCommand(this.options.windowTitle);
+        const delivery = await this.runContinueCommand(this.options.windowTitle);
         this.state.autoContinueCount += 1;
-        this.state.note = `Autopilot envio continue ${this.state.autoContinueCount}/${this.state.maxAutoTurns}.`;
+        this.state.note =
+          delivery === "restore"
+            ? `Autopilot envio continue ${this.state.autoContinueCount}/${this.state.maxAutoTurns} con fallback visible.`
+            : `Autopilot envio continue ${this.state.autoContinueCount}/${this.state.maxAutoTurns} sin restaurar ventana.`;
       } catch (error) {
         this.state.autopilotEnabled = false;
         this.state.note = `Autopilot fallo: ${error instanceof Error ? error.message : String(error)}`;
