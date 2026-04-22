@@ -50,6 +50,12 @@ describe("DesktopCompanion", () => {
     await companion.start();
     expect(companion.getStatus().desktopAutomationReady).toBe(true);
     expect(companion.getStatus().lastCompletedConversationId).toBe("conversation-1");
+    expect(companion.getStatus().conversations).toHaveLength(1);
+    expect(companion.getStatus().conversations[0]).toMatchObject({
+      conversationId: "conversation-1",
+      status: "waiting_manual",
+      awaitingApproval: true,
+    });
 
     companion.setAutopilot(true, 2);
     appendFileSync(
@@ -65,8 +71,71 @@ describe("DesktopCompanion", () => {
       autoContinueCount: 1,
       maxAutoTurns: 2,
     });
+    expect(companion.getStatus().conversations[0]).toMatchObject({
+      conversationId: "conversation-1",
+      status: "auto_continue_sent",
+      autoContinueCount: 1,
+      awaitingApproval: false,
+      lastContinueMode: "autopilot",
+    });
 
     companion.stop();
+  });
+
+  it("keeps background thread completions in manual approval instead of sending continue blindly", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    const logPath = join(dayDir, "codex.log");
+    writeFileSync(
+      logPath,
+      [
+        "[electron-message-handler] method=turn/start conversationId=conversation-1",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const runContinue = vi.fn().mockResolvedValue("focus");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:00:00.000Z"),
+    });
+
+    await companion.start();
+    companion.setAutopilot(true, 2);
+    appendFileSync(
+      logPath,
+      [
+        "[electron-message-handler] method=turn/start conversationId=conversation-2",
+        "[electron-message-handler] [desktop-notifications] show turn-complete conversationId=conversation-1",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await companion.scanNow();
+
+    expect(runContinue).not.toHaveBeenCalled();
+    expect(companion.getStatus().activeConversationId).toBe("conversation-2");
+    expect(companion.getStatus().conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          status: "attention",
+          awaitingApproval: true,
+        }),
+        expect.objectContaining({
+          conversationId: "conversation-2",
+          status: "running",
+          isActive: true,
+        }),
+      ]),
+    );
   });
 
   it("exposes the packaged desktop logs path by default", () => {
@@ -94,9 +163,10 @@ describe("DesktopCompanion", () => {
       now: () => new Date("2026-04-22T12:00:00.000Z"),
     });
 
-    await companion.continueActive();
+    await companion.continueConversation("conversation-1");
 
     expect(runContinue).toHaveBeenCalledWith("Codex");
+    expect(companion.getStatus().note).toContain("conversation-1");
     expect(companion.getStatus().note).toContain("fallback visible");
   });
 

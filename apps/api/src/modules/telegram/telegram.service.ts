@@ -87,9 +87,17 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
                 String(job.data.summary),
               );
               break;
-            case "desktop-turn-complete":
-              await this.sendDesktopTurnCompleteNotification(
+            case "desktop-awaiting-approval":
+              await this.sendDesktopAwaitingApprovalNotification(
                 String(job.data.connectorId),
+                String(job.data.conversationId),
+                String(job.data.note),
+              );
+              break;
+            case "desktop-continue-sent":
+              await this.sendDesktopContinueSentNotification(
+                String(job.data.connectorId),
+                String(job.data.conversationId),
                 String(job.data.note),
               );
               break;
@@ -170,7 +178,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           "Codex Relay enlazado.",
           "Usa /run <ruta> <prompt> para lanzar tareas.",
           "Usa /sessions para ver las ultimas sesiones.",
-          "Usa /desktop_status y /desktop_continue para controlar Codex Desktop.",
+          "Usa /desktop_status y /desktop_continue [connectorId] [conversationId] para controlar Codex Desktop.",
         ].join("\n"),
       );
       return;
@@ -275,8 +283,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await this.issueDesktopCommand(userId, {
         connectorId: action.connectorId,
         command: action.command,
+        ...(action.conversationId ? { conversationId: action.conversationId } : {}),
       });
-      await this.answerCallbackQuery(query.id, `Desktop ${action.command} enviado`);
+      await this.answerCallbackQuery(
+        query.id,
+        action.conversationId
+          ? `Desktop ${action.command} ${action.conversationId.slice(0, 8)}`
+          : `Desktop ${action.command} enviado`,
+      );
       return;
     }
 
@@ -394,7 +408,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     payload: {
       connectorId?: string;
-      command: "continue_active" | "autopilot_on" | "autopilot_off";
+      command:
+        | "continue_active"
+        | "continue_conversation"
+        | "autopilot_on"
+        | "autopilot_off";
+      conversationId?: string;
       maxAutoTurns?: number;
     },
   ): Promise<void> {
@@ -414,7 +433,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.sendMessage(chatId, this.formatDesktopStatus(status), {
-      reply_markup: buildDesktopKeyboard(status),
+      reply_markup: buildDesktopKeyboard(
+        status,
+        status.conversations.find((conversation) => conversation.awaitingApproval)?.conversationId,
+      ),
     });
   }
 
@@ -422,29 +444,59 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     chatId: number,
     userId: string,
     text: string,
-    command: "continue_active" | "autopilot_on" | "autopilot_off",
+    command:
+      | "continue_active"
+      | "continue_conversation"
+      | "autopilot_on"
+      | "autopilot_off",
   ): Promise<void> {
     const parts = text.trim().split(/\s+/);
     const connectorCandidate = parts[1];
-    const maxCandidate = parts[2];
-    const connectorId =
-      connectorCandidate && !/^\d+$/.test(connectorCandidate) ? connectorCandidate : undefined;
-    const maxAutoTurns = (() => {
-      const numeric = /^\d+$/.test(maxCandidate ?? "")
-        ? Number(maxCandidate)
+    const secondCandidate = parts[2];
+
+    let effectiveCommand = command;
+    let connectorId: string | undefined;
+    let conversationId: string | undefined;
+    let maxAutoTurns: number | undefined;
+
+    if (command === "continue_active" || command === "continue_conversation") {
+      if (connectorCandidate && secondCandidate) {
+        connectorId = connectorCandidate;
+        conversationId = secondCandidate;
+        effectiveCommand = "continue_conversation";
+      } else if (connectorCandidate) {
+        const exactConnector = this.connectorHub.getDesktopStatus(userId, connectorCandidate);
+        if (exactConnector) {
+          connectorId = connectorCandidate;
+        } else {
+          conversationId = connectorCandidate;
+          effectiveCommand = "continue_conversation";
+        }
+      }
+    } else {
+      const numeric = /^\d+$/.test(secondCandidate ?? "")
+        ? Number(secondCandidate)
         : /^\d+$/.test(connectorCandidate ?? "")
           ? Number(connectorCandidate)
           : undefined;
-      return numeric && numeric > 0 ? numeric : undefined;
-    })();
+      maxAutoTurns = numeric && numeric > 0 ? numeric : undefined;
+      connectorId =
+        connectorCandidate && !/^\d+$/.test(connectorCandidate) ? connectorCandidate : undefined;
+    }
 
     await this.issueDesktopCommand(userId, {
-      command,
+      command: effectiveCommand,
       ...(connectorId ? { connectorId } : {}),
+      ...(conversationId ? { conversationId } : {}),
       ...(maxAutoTurns ? { maxAutoTurns } : {}),
     });
 
-    await this.sendMessage(chatId, `Comando ${command} enviado al desktop companion.`);
+    await this.sendMessage(
+      chatId,
+      conversationId
+        ? `Comando ${effectiveCommand} enviado para ${conversationId}.`
+        : `Comando ${effectiveCommand} enviado al desktop companion.`,
+    );
   }
 
   private async sendSessionsDigest(chatId: number, userId: string): Promise<void> {
@@ -551,8 +603,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async sendDesktopTurnCompleteNotification(
+  private async sendDesktopAwaitingApprovalNotification(
     connectorId: string,
+    conversationId: string,
     note: string,
   ): Promise<void> {
     const status = this.connectorHub.getDesktopStatus(this.config.DEFAULT_USER_ID, connectorId);
@@ -571,18 +624,64 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const conversation = status.conversations.find(
+      (item) => item.conversationId === conversationId,
+    );
+
     await this.sendMessage(
       Number(user.telegramChatId),
       [
-        `Codex Desktop requiere accion en ${connectorId}.`,
+        `Codex Desktop requiere aprobacion en ${connectorId}.`,
+        `Conversacion: ${conversationId}`,
         note,
-        status.lastTurnCompletedAt ? `Ultimo turn complete: ${status.lastTurnCompletedAt}` : null,
+        conversation?.lastTurnCompletedAt
+          ? `Ultimo turn complete: ${conversation.lastTurnCompletedAt}`
+          : null,
       ]
         .filter(Boolean)
         .join("\n"),
       {
-        reply_markup: buildDesktopKeyboard(status),
+        reply_markup: buildDesktopKeyboard(status, conversationId),
       },
+    );
+  }
+
+  private async sendDesktopContinueSentNotification(
+    connectorId: string,
+    conversationId: string,
+    note: string,
+  ): Promise<void> {
+    const status = this.connectorHub.getDesktopStatus(this.config.DEFAULT_USER_ID, connectorId);
+    if (!status) {
+      return;
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: this.config.DEFAULT_USER_ID },
+      select: {
+        telegramChatId: true,
+      },
+    });
+
+    if (!user?.telegramChatId) {
+      return;
+    }
+
+    const conversation = status.conversations.find(
+      (item) => item.conversationId === conversationId,
+    );
+
+    await this.sendMessage(
+      Number(user.telegramChatId),
+      [
+        `Autopilot continuo ${conversationId} en ${connectorId}.`,
+        note,
+        conversation?.lastContinueSentAt
+          ? `Continue enviado: ${conversation.lastContinueSentAt}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
     );
   }
 
@@ -632,6 +731,19 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private formatDesktopStatus(status: DesktopStatus): string {
+    const conversations = status.conversations
+      .slice(0, 6)
+      .map((conversation) =>
+        [
+          `- ${conversation.conversationId}${conversation.isActive ? " (activa)" : ""}`,
+          `estado=${conversation.status}`,
+          conversation.awaitingApproval ? "approval=pending" : null,
+          conversation.autoContinueCount ? `auto=${conversation.autoContinueCount}` : null,
+        ]
+          .filter(Boolean)
+          .join(" | "),
+      );
+
     return [
       `Desktop connector: ${status.connectorId}`,
       `Listo: ${status.desktopAutomationReady ? "si" : "no"}`,
@@ -642,6 +754,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         ? `Ultima completa: ${status.lastCompletedConversationId}`
         : null,
       status.note ? `Nota: ${status.note}` : null,
+      conversations.length ? "Conversaciones:" : null,
+      ...conversations,
     ]
       .filter(Boolean)
       .join("\n");

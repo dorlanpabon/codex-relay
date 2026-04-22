@@ -103,7 +103,7 @@ Variables utiles del conector:
 - `/pause <sessionId>`
 - `/abort <sessionId>`
 - `/desktop_status`
-- `/desktop_continue`
+- `/desktop_continue [connectorId] [conversationId]`
 - `/desktop_auto_on [maxTurnos]`
 - `/desktop_auto_off`
 
@@ -111,7 +111,8 @@ El bot tambien envia:
 
 - aprobaciones con botones inline
 - alertas cuando `safe auto-continue` se detiene por error repetido, limite o pregunta explicita
-- alertas cuando Codex Desktop termina un turno y el companion necesita accion remota
+- alertas por conversacion cuando Codex Desktop queda esperando aprobacion remota
+- notificaciones por conversacion cada vez que Autopilot envia `continue`
 - link directo al panel para una sesion
 
 ## Observabilidad
@@ -134,8 +135,9 @@ Notas:
 - La vista de sesion expone un boton `Rehidratar` para forzar manualmente esa restauracion cuando el `threadId` ya existe.
 - El conector intenta usar `codex app-server`; si `codex.exe` no es ejecutable en Windows, reporta `appServerReady=false` y queda visible desde el panel.
 - El dashboard solo ofrece proyectos de conectores con `appServerReady=true`; si no hay ninguno listo, bloquea tareas nuevas con un aviso claro.
-- El dashboard tambien expone una tarjeta `Codex Desktop` con estado, `Continuar Desktop` y `Autopilot`.
+- El dashboard tambien expone una tarjeta `Codex Desktop` con estado, `Autopilot` y una lista de conversaciones detectadas para continuar un thread especifico.
 - La API expone `GET /connectors/desktop/status` y `POST /connectors/desktop/commands` para el companion de Windows.
+- El companion ya rastrea multiples conversaciones de Codex Desktop, marca cuales quedaron esperando aprobacion y solo envia `continue` automatico cuando el thread terminado sigue siendo el thread activo visible.
 - El connector hub ya no pierde el estado `connected` por cierres de sockets viejos durante reconnects.
 - En Windows, `pnpm build` reutiliza el Prisma Client existente si `query_engine-windows.dll.node` esta bloqueado por un proceso del API ya corriendo.
 - En esta maquina, el companion detecta logs reales de Codex Desktop y ya puede enviar `continue` usando foco Win32 + teclado simulado. Por defecto primero intenta continuar sin restaurar la ventana; si Windows bloquea el foco o la inyeccion de teclado, cae al fallback visible y deja el detalle exacto en `note`.

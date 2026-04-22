@@ -8,13 +8,21 @@ export function DesktopControls({ status }: { status: DesktopStatusDto | null })
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const submit = (command: "continue_active" | "autopilot_on" | "autopilot_off") => {
+  const submit = (
+    command:
+      | "continue_active"
+      | "continue_conversation"
+      | "autopilot_on"
+      | "autopilot_off",
+    conversationId?: string,
+  ) => {
     startTransition(async () => {
       try {
         setError(null);
         await sendDesktopCommand({
           command,
           ...(status?.connectorId ? { connectorId: status.connectorId } : {}),
+          ...(conversationId ? { conversationId } : {}),
           ...(status?.maxAutoTurns ? { maxAutoTurns: status.maxAutoTurns } : {}),
         });
         window.location.reload();
@@ -78,6 +86,45 @@ export function DesktopControls({ status }: { status: DesktopStatusDto | null })
       {status.lastTurnCompletedAt ? (
         <div className="meta">
           Ultimo turn complete: {new Date(status.lastTurnCompletedAt).toLocaleString()}
+        </div>
+      ) : null}
+      {status.conversations.length ? (
+        <div className="list">
+          {status.conversations.map((conversation) => (
+            <div className="list-item" key={conversation.conversationId}>
+              <div className="row">
+                <strong>{conversation.conversationId}</strong>
+                <span
+                  className={`pill ${conversation.awaitingApproval ? "warning" : ""}`}
+                >
+                  {conversation.status}
+                </span>
+              </div>
+              <div className="meta">
+                {conversation.isActive ? "activa" : "en segundo plano"} · auto{" "}
+                {conversation.autoContinueCount}/{status.maxAutoTurns}
+              </div>
+              {conversation.lastTurnCompletedAt ? (
+                <div className="meta">
+                  Ultimo complete:{" "}
+                  {new Date(conversation.lastTurnCompletedAt).toLocaleString()}
+                </div>
+              ) : null}
+              <div>{conversation.note || "Sin novedades."}</div>
+              <div className="button-row">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() =>
+                    submit("continue_conversation", conversation.conversationId)
+                  }
+                  disabled={isPending || !status.desktopAutomationReady}
+                >
+                  Continuar este thread
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       ) : null}
       {error ? <div className="pill danger">{error}</div> : null}

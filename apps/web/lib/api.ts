@@ -104,6 +104,18 @@ export type DesktopStatusDto = {
   autopilotEnabled: boolean;
   maxAutoTurns: number;
   autoContinueCount: number;
+  conversations: Array<{
+    conversationId: string;
+    status: string;
+    isActive: boolean;
+    awaitingApproval: boolean;
+    autoContinueCount: number;
+    lastTurnStartedAt?: string;
+    lastTurnCompletedAt?: string;
+    lastContinueSentAt?: string;
+    lastContinueMode?: "manual" | "autopilot";
+    note?: string;
+  }>;
   activeConversationId?: string;
   lastCompletedConversationId?: string;
   lastTurnCompletedAt?: string;
@@ -150,7 +162,12 @@ export const sendCommand = (payload: {
 
 export const sendDesktopCommand = (payload: {
   connectorId?: string;
-  command: "continue_active" | "autopilot_on" | "autopilot_off";
+  command:
+    | "continue_active"
+    | "continue_conversation"
+    | "autopilot_on"
+    | "autopilot_off";
+  conversationId?: string;
   maxAutoTurns?: number;
 }) =>
   apiFetch("/connectors/desktop/commands", {

@@ -151,6 +151,7 @@ const main = async (): Promise<void> => {
       autopilotEnabled: false,
       maxAutoTurns: config.DESKTOP_AUTOPILOT_MAX_TURNS,
       autoContinueCount: 0,
+      conversations: [],
       note: "Desktop companion deshabilitado.",
     };
 
@@ -250,6 +251,12 @@ const main = async (): Promise<void> => {
             switch (envelope.payload.command) {
               case "continue_active":
                 await desktopCompanion?.continueActive();
+                break;
+              case "continue_conversation":
+                await desktopCompanion?.continueConversation(
+                  envelope.payload.conversationId,
+                  "manual",
+                );
                 break;
               case "autopilot_on":
                 desktopCompanion?.setAutopilot(true, envelope.payload.maxAutoTurns);

@@ -55,8 +55,8 @@ describe("contracts", () => {
       type: "desktop.command",
       payload: {
         connectorId: "connector-1",
-        command: "autopilot_on",
-        maxAutoTurns: 8,
+        command: "continue_conversation",
+        conversationId: "conversation-1",
       },
     });
     const status = ConnectorEventEnvelopeSchema.parse({
@@ -68,14 +68,28 @@ describe("contracts", () => {
         autopilotEnabled: true,
         maxAutoTurns: 8,
         autoContinueCount: 2,
+        conversations: [
+          {
+            conversationId: "conversation-1",
+            status: "auto_continue_sent",
+            isActive: true,
+            awaitingApproval: false,
+            autoContinueCount: 2,
+            lastTurnCompletedAt: new Date().toISOString(),
+            lastContinueSentAt: new Date().toISOString(),
+            lastContinueMode: "autopilot",
+            note: "Autopilot envio continue.",
+          },
+        ],
         activeConversationId: "conversation-1",
         lastTurnCompletedAt: new Date().toISOString(),
         note: "Autopilot activo",
       },
     });
 
-    expect(command.type).toBe("desktop.command");
+    expect(command.payload.command).toBe("continue_conversation");
     expect(status.type).toBe("desktop.status");
+    expect(status.payload.conversations).toHaveLength(1);
   });
 
   it("accepts connector event envelopes", () => {

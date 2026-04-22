@@ -242,19 +242,8 @@ export class ConnectorHubService {
     });
 
     const next = this.desktopStates.get(connectorId)?.state;
-    if (
-      next?.lastTurnCompletedAt &&
-      previous?.lastTurnCompletedAt &&
-      previous.lastTurnCompletedAt !== next.lastTurnCompletedAt &&
-      (!next.autopilotEnabled ||
-        next.note?.includes("detenido") ||
-        next.note?.includes("fallo"))
-    ) {
-      await this.queue.enqueueTelegramNotification("desktop-turn-complete", {
-        connectorId,
-        note: next.note ?? "Turn completo detectado.",
-        timestamp: next.lastTurnCompletedAt,
-      });
+    if (next) {
+      await this.enqueueDesktopConversationNotifications(connectorId, previous, next);
     }
   }
 
@@ -306,18 +295,31 @@ export class ConnectorHubService {
     state: Partial<DesktopStatus>,
   ): void {
     const previous = this.desktopStates.get(connectorId)?.state;
+    const conversations = state.conversations ?? previous?.conversations ?? [];
     const activeConversationId =
-      state.activeConversationId ?? previous?.activeConversationId;
+      state.activeConversationId ??
+      previous?.activeConversationId ??
+      conversations.find((conversation) => conversation.isActive)?.conversationId;
+    const latestCompletedConversation = [...conversations]
+      .filter((conversation) => conversation.lastTurnCompletedAt)
+      .sort((left, right) =>
+        Date.parse(right.lastTurnCompletedAt ?? "") - Date.parse(left.lastTurnCompletedAt ?? ""),
+      )[0];
     const lastCompletedConversationId =
-      state.lastCompletedConversationId ?? previous?.lastCompletedConversationId;
+      state.lastCompletedConversationId ??
+      previous?.lastCompletedConversationId ??
+      latestCompletedConversation?.conversationId;
     const lastTurnCompletedAt =
-      state.lastTurnCompletedAt ?? previous?.lastTurnCompletedAt;
+      state.lastTurnCompletedAt ??
+      previous?.lastTurnCompletedAt ??
+      latestCompletedConversation?.lastTurnCompletedAt;
     const desktopAutomationReady =
       (state.desktopAutomationReady ?? previous?.desktopAutomationReady ?? false) ||
       Boolean(
         activeConversationId ||
           lastCompletedConversationId ||
-          lastTurnCompletedAt,
+          lastTurnCompletedAt ||
+          conversations.length,
       );
     const noteCandidate = state.note ?? previous?.note;
 
@@ -329,7 +331,14 @@ export class ConnectorHubService {
         desktopAutomationReady,
         autopilotEnabled: state.autopilotEnabled ?? previous?.autopilotEnabled ?? false,
         maxAutoTurns: state.maxAutoTurns ?? previous?.maxAutoTurns ?? 5,
-        autoContinueCount: state.autoContinueCount ?? previous?.autoContinueCount ?? 0,
+        autoContinueCount:
+          state.autoContinueCount ??
+          previous?.autoContinueCount ??
+          conversations.reduce(
+            (total, conversation) => total + conversation.autoContinueCount,
+            0,
+          ),
+        conversations,
         activeConversationId,
         lastCompletedConversationId,
         lastTurnCompletedAt,
@@ -339,5 +348,49 @@ export class ConnectorHubService {
             : noteCandidate,
       },
     });
+  }
+
+  private async enqueueDesktopConversationNotifications(
+    connectorId: string,
+    previous: DesktopStatus | undefined,
+    next: DesktopStatus,
+  ): Promise<void> {
+    const previousConversations = new Map(
+      (previous?.conversations ?? []).map((conversation) => [
+        conversation.conversationId,
+        conversation,
+      ]),
+    );
+
+    for (const conversation of next.conversations) {
+      const previousConversation = previousConversations.get(conversation.conversationId);
+
+      if (
+        conversation.lastContinueMode === "autopilot" &&
+        conversation.lastContinueSentAt &&
+        conversation.lastContinueSentAt !== previousConversation?.lastContinueSentAt
+      ) {
+        await this.queue.enqueueTelegramNotification("desktop-continue-sent", {
+          connectorId,
+          conversationId: conversation.conversationId,
+          note: conversation.note ?? next.note ?? "Autopilot envio continue.",
+          timestamp: conversation.lastContinueSentAt,
+        });
+      }
+
+      if (
+        conversation.awaitingApproval &&
+        conversation.lastTurnCompletedAt &&
+        conversation.lastTurnCompletedAt !== previousConversation?.lastTurnCompletedAt &&
+        (conversation.status === "waiting_manual" || conversation.status === "attention")
+      ) {
+        await this.queue.enqueueTelegramNotification("desktop-awaiting-approval", {
+          connectorId,
+          conversationId: conversation.conversationId,
+          note: conversation.note ?? next.note ?? "Codex Desktop requiere aprobacion.",
+          timestamp: conversation.lastTurnCompletedAt,
+        });
+      }
+    }
   }
 }

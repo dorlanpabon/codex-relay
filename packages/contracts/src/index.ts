@@ -34,6 +34,7 @@ export const ControlCommandNameSchema = z.enum([
 ]);
 export const DesktopCommandNameSchema = z.enum([
   "continue_active",
+  "continue_conversation",
   "autopilot_on",
   "autopilot_off",
 ]);
@@ -108,6 +109,7 @@ export const ControlCommandSchema = z.object({
 export const DesktopCommandSchema = z.object({
   connectorId: z.string().min(1).optional(),
   command: DesktopCommandNameSchema,
+  conversationId: z.string().min(1).optional(),
   maxAutoTurns: z.number().int().min(1).max(100).optional(),
 });
 
@@ -149,6 +151,29 @@ export const SessionResumePayloadSchema = z.object({
   status: SessionStatusSchema,
 });
 
+export const DesktopConversationStatusSchema = z.enum([
+  "running",
+  "waiting_manual",
+  "manual_continue_sent",
+  "auto_continue_sent",
+  "attention",
+]);
+
+export const DesktopConversationContinueModeSchema = z.enum(["manual", "autopilot"]);
+
+export const DesktopConversationSchema = z.object({
+  conversationId: z.string().min(1),
+  status: DesktopConversationStatusSchema.default("running"),
+  isActive: z.boolean().default(false),
+  awaitingApproval: z.boolean().default(false),
+  autoContinueCount: z.number().int().min(0).default(0),
+  lastTurnStartedAt: z.string().datetime().optional(),
+  lastTurnCompletedAt: z.string().datetime().optional(),
+  lastContinueSentAt: z.string().datetime().optional(),
+  lastContinueMode: DesktopConversationContinueModeSchema.optional(),
+  note: z.string().min(1).optional(),
+});
+
 export const DesktopStatusSchema = z.object({
   connectorId: z.string().min(1),
   connected: z.boolean().default(true),
@@ -156,6 +181,7 @@ export const DesktopStatusSchema = z.object({
   autopilotEnabled: z.boolean().default(false),
   maxAutoTurns: z.number().int().min(1).default(5),
   autoContinueCount: z.number().int().min(0).default(0),
+  conversations: z.array(DesktopConversationSchema).default([]),
   activeConversationId: z.string().min(1).optional(),
   lastCompletedConversationId: z.string().min(1).optional(),
   lastTurnCompletedAt: z.string().datetime().optional(),
@@ -235,12 +261,17 @@ export type PairRequest = z.infer<typeof PairRequestSchema>;
 export type PairResponse = z.infer<typeof PairResponseSchema>;
 export type SessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
 export type SessionResumePayload = z.infer<typeof SessionResumePayloadSchema>;
+export type DesktopConversation = z.infer<typeof DesktopConversationSchema>;
 export type DesktopStatus = z.infer<typeof DesktopStatusSchema>;
 export type ConnectorCommandEnvelope = z.infer<typeof ConnectorCommandEnvelopeSchema>;
 export type ConnectorEventEnvelope = z.infer<typeof ConnectorEventEnvelopeSchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type SessionSeverity = z.infer<typeof SessionSeveritySchema>;
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>;
+export type DesktopConversationStatus = z.infer<typeof DesktopConversationStatusSchema>;
+export type DesktopConversationContinueMode = z.infer<
+  typeof DesktopConversationContinueModeSchema
+>;
 
 export const SAFE_CONTINUE_PROMPT =
   "Continua hasta terminar. Solo detente si necesitas una decision real, credenciales externas, o una aclaracion imposible de inferir.";

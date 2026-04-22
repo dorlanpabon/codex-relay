@@ -8,7 +8,11 @@ import {
 import os from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import type { DesktopStatus } from "@codex-relay/contracts";
+import type {
+  DesktopConversation,
+  DesktopConversationContinueMode,
+  DesktopStatus,
+} from "@codex-relay/contracts";
 
 import { parseDesktopLogLine } from "./log-parser.js";
 
@@ -27,6 +31,7 @@ type DesktopCompanionOptions = {
 };
 
 type DesktopRuntimeState = Omit<DesktopStatus, "connectorId" | "connected">;
+type ConversationRuntimeState = DesktopConversation;
 
 type LogFileSnapshot = {
   path: string;
@@ -226,6 +231,16 @@ export const defaultCodexDesktopLogsRoot = (): string =>
     "Logs",
   );
 
+const conversationActivityRank = (conversation: ConversationRuntimeState): number =>
+  [
+    conversation.lastContinueSentAt,
+    conversation.lastTurnCompletedAt,
+    conversation.lastTurnStartedAt,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => Date.parse(value))
+    .find((value) => Number.isFinite(value)) ?? 0;
+
 export class DesktopCompanion extends EventEmitter {
   private readonly platform: NodeJS.Platform;
   private readonly now: () => Date;
@@ -250,6 +265,7 @@ export class DesktopCompanion extends EventEmitter {
       autopilotEnabled: false,
       maxAutoTurns: options.defaultMaxAutoTurns,
       autoContinueCount: 0,
+      conversations: [],
       note: "Desktop companion inicializando.",
     };
   }
@@ -273,23 +289,58 @@ export class DesktopCompanion extends EventEmitter {
   }
 
   getStatus(): DesktopRuntimeState {
-    return { ...this.state };
+    return {
+      ...this.state,
+      conversations: this.state.conversations.map((conversation) => ({ ...conversation })),
+    };
   }
 
   async continueActive(): Promise<DesktopRuntimeState> {
+    return this.continueConversation();
+  }
+
+  async continueConversation(
+    conversationId?: string,
+    mode: DesktopConversationContinueMode = "manual",
+  ): Promise<DesktopRuntimeState> {
     this.ensureReady();
+    const targetConversationId = this.resolveContinueTarget(conversationId);
+    if (!targetConversationId) {
+      this.state.note = "No encontre una conversacion Desktop lista para continuar.";
+      this.emitStatus();
+      throw new Error(this.state.note);
+    }
+
+    const conversation = this.getOrCreateConversation(targetConversationId);
+    if (
+      conversationId &&
+      this.state.activeConversationId &&
+      this.state.activeConversationId !== conversationId
+    ) {
+      const message = `La conversacion ${conversationId} no esta activa en Codex Desktop. Abrela y reintenta.`;
+      conversation.awaitingApproval = true;
+      conversation.status = "attention";
+      conversation.note = message;
+      this.state.note = message;
+      this.recomputeDerivedState();
+      this.emitStatus();
+      throw new Error(message);
+    }
+
     try {
       const delivery = await this.runContinueCommand(this.options.windowTitle);
-      this.state.note =
-        delivery === "restore"
-          ? "Continue enviado a Codex Desktop con fallback visible."
-          : "Continue enviado a Codex Desktop sin restaurar ventana.";
+      this.applyContinueSuccess(conversation, mode, delivery);
     } catch (error) {
-      this.state.note = `No pude enviar continue: ${error instanceof Error ? error.message : String(error)}`;
+      this.applyContinueFailure(
+        conversation,
+        mode,
+        error instanceof Error ? error.message : String(error),
+      );
       this.emitStatus();
       throw error;
     }
 
+    this.recomputeDerivedState();
     this.emitStatus();
     return this.getStatus();
   }
@@ -300,12 +351,16 @@ export class DesktopCompanion extends EventEmitter {
       this.state.autopilotEnabled = true;
       this.state.maxAutoTurns = maxAutoTurns ?? this.state.maxAutoTurns;
       this.state.autoContinueCount = 0;
+      for (const conversation of this.state.conversations) {
+        conversation.autoContinueCount = 0;
+      }
       this.state.note = `Autopilot activo (${this.state.maxAutoTurns} turnos max).`;
     } else {
       this.state.autopilotEnabled = false;
       this.state.note = "Autopilot detenido.";
     }
 
+    this.recomputeDerivedState();
     this.emitStatus();
     return this.getStatus();
   }
@@ -388,13 +443,40 @@ export class DesktopCompanion extends EventEmitter {
       }
 
       if (signal.kind === "turn.start") {
-        const conversationChanged =
-          this.state.activeConversationId !== signal.conversationId;
-        this.state.activeConversationId = signal.conversationId;
-        if (conversationChanged) {
-          this.state.autoContinueCount = 0;
-        }
-        this.state.note = `Turn detectado en ${signal.conversationId}.`;
+        const conversation = this.getOrCreateConversation(signal.conversationId);
+        this.setActiveConversation(signal.conversationId);
+        conversation.status = "running";
+        conversation.awaitingApproval = false;
+        conversation.lastTurnStartedAt = this.now().toISOString();
+        conversation.note = `Turn detectado en ${signal.conversationId}.`;
+        this.state.note = conversation.note;
+        this.recomputeDerivedState();
+        continue;
+      }
+
+      const conversation = this.getOrCreateConversation(signal.conversationId);
+      const completedAt = this.now().toISOString();
+      conversation.lastTurnCompletedAt = completedAt;
+      if (!this.state.activeConversationId) {
+        this.setActiveConversation(signal.conversationId);
+      }
+
+      if (!this.state.autopilotEnabled) {
+        conversation.awaitingApproval = true;
+        conversation.status = "waiting_manual";
+        conversation.note = `Turn completo en ${signal.conversationId}. Esperando aprobacion remota.`;
+        this.state.note = conversation.note;
+        this.recomputeDerivedState();
+        continue;
+      }
+
+      if (conversation.autoContinueCount >= this.state.maxAutoTurns) {
+        conversation.awaitingApproval = true;
+        conversation.status = "attention";
+        conversation.note =
+          `Autopilot no continuo ${signal.conversationId}: limite ${conversation.autoContinueCount}/${this.state.maxAutoTurns}.`;
+        this.state.note = conversation.note;
+        this.recomputeDerivedState();
         continue;
       }
 
@@ -402,38 +484,127 @@ export class DesktopCompanion extends EventEmitter {
         this.state.activeConversationId &&
         signal.conversationId !== this.state.activeConversationId
       ) {
-        continue;
-      }
-
-      this.state.activeConversationId ??= signal.conversationId;
-      this.state.lastCompletedConversationId = signal.conversationId;
-      this.state.lastTurnCompletedAt = this.now().toISOString();
-      this.state.note = this.state.autopilotEnabled
-        ? "Turn completo detectado. Ejecutando autopilot."
-        : "Turn completo detectado. Esperando instruccion remota.";
-
-      if (!this.state.autopilotEnabled) {
-        continue;
-      }
-
-      if (this.state.autoContinueCount >= this.state.maxAutoTurns) {
-        this.state.autopilotEnabled = false;
-        this.state.note = `Autopilot detenido por limite (${this.state.maxAutoTurns}).`;
+        conversation.awaitingApproval = true;
+        conversation.status = "attention";
+        conversation.note =
+          `Autopilot detecto que ${signal.conversationId} termino, pero no esta activa en Codex Desktop. Abrela y reintenta.`;
+        this.state.note = conversation.note;
+        this.recomputeDerivedState();
         continue;
       }
 
       try {
-        const delivery = await this.runContinueCommand(this.options.windowTitle);
-        this.state.autoContinueCount += 1;
-        this.state.note =
-          delivery === "restore"
-            ? `Autopilot envio continue ${this.state.autoContinueCount}/${this.state.maxAutoTurns} con fallback visible.`
-            : `Autopilot envio continue ${this.state.autoContinueCount}/${this.state.maxAutoTurns} sin restaurar ventana.`;
-      } catch (error) {
-        this.state.autopilotEnabled = false;
-        this.state.note = `Autopilot fallo: ${error instanceof Error ? error.message : String(error)}`;
+        await this.continueConversation(signal.conversationId, "autopilot");
+      } catch {
+        this.recomputeDerivedState();
       }
     }
+  }
+
+  private resolveContinueTarget(requestedConversationId?: string): string | undefined {
+    if (requestedConversationId) {
+      return requestedConversationId;
+    }
+
+    return (
+      this.state.activeConversationId ??
+      this.state.conversations.find((conversation) => conversation.awaitingApproval)?.conversationId ??
+      this.state.lastCompletedConversationId
+    );
+  }
+
+  private getOrCreateConversation(conversationId: string): ConversationRuntimeState {
+    const existing = this.state.conversations.find(
+      (conversation) => conversation.conversationId === conversationId,
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const conversation: ConversationRuntimeState = {
+      conversationId,
+      status: "running",
+      isActive: false,
+      awaitingApproval: false,
+      autoContinueCount: 0,
+    };
+    this.state.conversations.push(conversation);
+    return conversation;
+  }
+
+  private setActiveConversation(conversationId: string): void {
+    this.state.activeConversationId = conversationId;
+    for (const conversation of this.state.conversations) {
+      conversation.isActive = conversation.conversationId === conversationId;
+    }
+  }
+
+  private applyContinueSuccess(
+    conversation: ConversationRuntimeState,
+    mode: DesktopConversationContinueMode,
+    delivery: DesktopContinueDelivery | void,
+  ): void {
+    const timestamp = this.now().toISOString();
+    conversation.awaitingApproval = false;
+    conversation.lastContinueSentAt = timestamp;
+    conversation.lastContinueMode = mode;
+    conversation.status = mode === "autopilot" ? "auto_continue_sent" : "manual_continue_sent";
+    if (mode === "autopilot") {
+      conversation.autoContinueCount += 1;
+    }
+    conversation.note =
+      mode === "autopilot"
+        ? delivery === "restore"
+          ? `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} con fallback visible.`
+          : `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} sin restaurar ventana.`
+        : delivery === "restore"
+          ? `Continue manual enviado a ${conversation.conversationId} con fallback visible.`
+          : `Continue manual enviado a ${conversation.conversationId} sin restaurar ventana.`;
+    this.setActiveConversation(conversation.conversationId);
+    this.state.note = conversation.note;
+  }
+
+  private applyContinueFailure(
+    conversation: ConversationRuntimeState,
+    mode: DesktopConversationContinueMode,
+    reason: string,
+  ): void {
+    conversation.awaitingApproval = true;
+    conversation.status = "attention";
+    conversation.note =
+      mode === "autopilot"
+        ? `Autopilot no pudo continuar ${conversation.conversationId}: ${reason}`
+        : `No pude continuar ${conversation.conversationId}: ${reason}`;
+    this.state.note = conversation.note;
+    this.recomputeDerivedState();
+  }
+
+  private recomputeDerivedState(): void {
+    const latestCompleted = [...this.state.conversations]
+      .filter((conversation) => conversation.lastTurnCompletedAt)
+      .sort((left, right) =>
+        Date.parse(right.lastTurnCompletedAt ?? "") - Date.parse(left.lastTurnCompletedAt ?? ""),
+      )[0];
+
+    this.state.lastCompletedConversationId = latestCompleted?.conversationId;
+    this.state.lastTurnCompletedAt = latestCompleted?.lastTurnCompletedAt;
+    this.state.autoContinueCount = this.state.conversations.reduce(
+      (total, conversation) => total + conversation.autoContinueCount,
+      0,
+    );
+    this.state.activeConversationId = this.state.conversations.find(
+      (conversation) => conversation.isActive,
+    )?.conversationId;
+    this.state.conversations = [...this.state.conversations].sort((left, right) => {
+      if (left.awaitingApproval !== right.awaitingApproval) {
+        return left.awaitingApproval ? -1 : 1;
+      }
+      if (left.isActive !== right.isActive) {
+        return left.isActive ? -1 : 1;
+      }
+      const activityDiff = conversationActivityRank(right) - conversationActivityRank(left);
+      return activityDiff || left.conversationId.localeCompare(right.conversationId);
+    });
   }
 
   private emitStatus(): void {

@@ -33,7 +33,12 @@ export type TelegramAction =
   | {
       kind: "desktop.command";
       connectorId: string;
-      command: "continue_active" | "autopilot_on" | "autopilot_off";
+      command:
+        | "continue_active"
+        | "continue_conversation"
+        | "autopilot_on"
+        | "autopilot_off";
+      conversationId?: string;
     };
 
 export const buildSessionKeyboard = (sessionId: string): InlineKeyboardMarkup => ({
@@ -62,12 +67,15 @@ export const buildApprovalKeyboard = (
 
 export const buildDesktopKeyboard = (
   status: Pick<DesktopStatus, "connectorId" | "autopilotEnabled">,
+  conversationId?: string,
 ): InlineKeyboardMarkup => ({
   inline_keyboard: [
     [
       {
-        text: "Continuar Desktop",
-        callback_data: `deskcontinue:${status.connectorId}`,
+        text: conversationId ? `Continuar ${conversationId.slice(0, 8)}` : "Continuar Desktop",
+        callback_data: conversationId
+          ? `deskcontinue:${status.connectorId}:${conversationId}`
+          : `deskcontinue:${status.connectorId}`,
       },
     ],
     [
@@ -122,10 +130,16 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
   }
 
   if (input.startsWith("deskcontinue:")) {
+    const [, connectorId, conversationId] = input.split(":");
+    if (!connectorId) {
+      return null;
+    }
+
     return {
       kind: "desktop.command",
-      connectorId: input.slice("deskcontinue:".length),
-      command: "continue_active",
+      connectorId,
+      command: conversationId ? "continue_conversation" : "continue_active",
+      ...(conversationId ? { conversationId } : {}),
     };
   }
 
