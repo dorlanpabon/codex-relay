@@ -517,6 +517,13 @@ const formatConversationHeader = (conversation: DesktopConversationView): string
     : `<b>#${conversation.index} ${escapeHtml(conversation.title)}</b>`;
 };
 
+const formatCommandLines = (conversation: DesktopConversationView): string =>
+  [
+    "<b>Comandos:</b>",
+    escapeHtml(conversation.commandText),
+    escapeHtml(conversation.inspectCommandText),
+  ].join("\n");
+
 const formatConversationBlock = (conversation: DesktopConversationView): string =>
   [
     formatConversationHeader(conversation),
@@ -527,7 +534,7 @@ const formatConversationBlock = (conversation: DesktopConversationView): string 
     conversation.summaryLine ? formatMetaLine("Ultimo estado", conversation.summaryLine) : null,
     conversation.workspaceLine ? formatWorkspaceLine(conversation.workspaceLine) : null,
     conversation.workspacePath ? `<b>Ruta:</b> <code>${escapeHtml(conversation.workspacePath)}</code>` : null,
-    `<b>Acciones:</b> <code>${escapeHtml(conversation.commandText)}</code> | <code>${escapeHtml(conversation.inspectCommandText)}</code>`,
+    formatCommandLines(conversation),
     conversation.hiddenDuplicateCount > 0
       ? `<i>Se ocultaron ${conversation.hiddenDuplicateCount} registros historicos del mismo repo.</i>`
       : null,
@@ -593,7 +600,7 @@ export const formatDesktopConversationInspectText = (
           `${conversation.hiddenDuplicateCount} registros del mismo repo se unificaron en esta vista`,
         )
       : null,
-    `<b>Acciones:</b> <code>${escapeHtml(conversation.commandText)}</code> | <code>${escapeHtml(conversation.inspectCommandText)}</code>`,
+    formatCommandLines(conversation),
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");

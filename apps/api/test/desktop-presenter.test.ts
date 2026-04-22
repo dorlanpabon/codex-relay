@@ -84,9 +84,7 @@ describe("desktop-presenter", () => {
     expect(text).toContain("<b>Activa:</b> #1 orders_codex");
     expect(text).toContain("<b>#1 orders_codex</b> <i>requiere accion | activa</i>");
     expect(text).toContain("<b>Ruta:</b> <code>D:/xampp/htdocs/orders_codex</code>");
-    expect(text).toContain(
-      "<code>/desktop_continue conversa</code> | <code>/desktop_inspect conversa</code>",
-    );
+    expect(text).toContain("<b>Comandos:</b>\n/desktop_continue conversa\n/desktop_inspect conversa");
     expect(text).toContain("Se ocultaron 1 registros historicos del mismo repo.");
     expect(text).not.toContain("conversation-2");
   });
@@ -101,7 +99,7 @@ describe("desktop-presenter", () => {
     expect(inspectText).toContain("<b>Thread #2</b> agent_dropshipping");
     expect(inspectText).toContain("<b>Thread:</b> Pulir onboarding");
     expect(inspectText).toContain(
-      "<code>/desktop_continue conversa</code> | <code>/desktop_inspect conversa</code>",
+      "<b>Comandos:</b>\n/desktop_continue conversa\n/desktop_inspect conversa",
     );
   });
 
