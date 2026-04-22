@@ -430,6 +430,8 @@ describe("DesktopCompanion", () => {
     expect(script).toContain("if (Invoke-CodexRelayContinue $process $false)");
     expect(script).toContain("elseif (Invoke-CodexRelayContinue $process $true)");
     expect(script).toContain("function Select-CodexRelayFirstProjectThread");
+    expect(script).toContain("Prepare-CodexRelayWindow $process $true");
+    expect(script).toContain("Invoke-CodexRelayAutomationElement $candidate 2");
     expect(script).toContain("Automations in ");
   });
 });
