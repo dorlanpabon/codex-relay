@@ -294,7 +294,13 @@ describe("DesktopCompanion", () => {
   it("marks visible fallback when continue needed a restore", async () => {
     const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
     tempDirs.push(tempDir);
-    mkdirSync(join(tempDir, "2026", "04", "22"), { recursive: true });
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\orders_codex\n",
+      "utf8",
+    );
     const runContinue = vi.fn().mockResolvedValue("restore");
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
@@ -306,11 +312,116 @@ describe("DesktopCompanion", () => {
       now: () => new Date("2026-04-22T12:00:00.000Z"),
     });
 
+    await companion.start();
     await companion.continueConversation("conversation-1");
 
-    expect(runContinue).toHaveBeenCalledWith("Codex");
+    expect(runContinue).toHaveBeenCalledWith("Codex", []);
     expect(companion.getStatus().note).toContain("conversation-1");
     expect(companion.getStatus().note).toContain("fallback visible");
+  });
+
+  it("selects a unique project before continuing an inactive thread", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      [
+        "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-22T12:01:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1 cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-22T12:02:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\extension_zajuna_automatization",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const runContinue = vi.fn().mockResolvedValue("focus");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:05:00.000Z"),
+    });
+
+    await companion.start();
+    await companion.continueConversation("conversation-1");
+
+    expect(runContinue).toHaveBeenCalledWith("Codex", ["my_home_smart"]);
+    expect(companion.getStatus().activeConversationId).toBe("conversation-1");
+  });
+
+  it("blocks continue when multiple tracked threads share the same project label", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      [
+        "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\orders_codex",
+        "2026-04-22T12:01:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1 cwd=D:\\xampp\\htdocs\\orders_codex",
+        "2026-04-22T12:02:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\orders_codex",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const runContinue = vi.fn().mockResolvedValue("focus");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:05:00.000Z"),
+    });
+
+    await companion.start();
+
+    await expect(companion.continueConversation("conversation-1")).rejects.toThrow(
+      /No pude seleccionar orders_codex de forma segura/i,
+    );
+    expect(runContinue).not.toHaveBeenCalled();
+  });
+
+  it("allows continue for the visible representative when older history exists for the same project", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    writeFileSync(
+      join(dayDir, "codex.log"),
+      [
+        "2026-04-21T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-21T12:01:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-1 cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-22T12:02:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-22T12:03:00.000Z info [desktop-notifications] [desktop-notifications] show turn-complete conversationId=conversation-2 cwd=D:\\xampp\\htdocs\\my_home_smart",
+        "2026-04-22T12:04:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-3 method=turn/start cwd=D:\\xampp\\htdocs\\extension_zajuna_automatization",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const runContinue = vi.fn().mockResolvedValue("focus");
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue,
+      now: () => new Date("2026-04-22T12:05:00.000Z"),
+    });
+
+    await companion.start();
+    await companion.continueConversation("conversation-2");
+
+    expect(runContinue).toHaveBeenCalledWith("Codex", ["my_home_smart"]);
+    await expect(companion.continueConversation("conversation-1")).rejects.toThrow(
+      /No pude seleccionar my_home_smart de forma segura/i,
+    );
   });
 
   it("builds a focus-first PowerShell script in hybrid mode", () => {
