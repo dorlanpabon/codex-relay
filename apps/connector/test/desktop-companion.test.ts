@@ -335,7 +335,10 @@ describe("DesktopCompanion", () => {
       ].join("\n"),
       "utf8",
     );
-    const runContinue = vi.fn().mockResolvedValue("focus");
+    const runContinue = vi.fn().mockResolvedValue({
+      delivery: "focus",
+      selectedTarget: "my_home_smart",
+    });
     const companion = new DesktopCompanion({
       logsRoot: tempDir,
       pollIntervalMs: 60_000,
@@ -351,6 +354,7 @@ describe("DesktopCompanion", () => {
 
     expect(runContinue).toHaveBeenCalledWith("Codex", ["my_home_smart"]);
     expect(companion.getStatus().activeConversationId).toBe("conversation-1");
+    expect(companion.getStatus().note).toContain("UI target: my_home_smart");
   });
 
   it("blocks continue when multiple tracked threads share the same project label", async () => {
@@ -433,7 +437,9 @@ describe("DesktopCompanion", () => {
     expect(script).toContain("function Find-CodexRelayPrimaryThreadButton");
     expect(script).toContain("function Open-CodexRelayThreadItem");
     expect(script).toContain("Prepare-CodexRelayWindow $process $true");
-    expect(script).toContain("Invoke-CodexRelayPhysicalClick $primaryButton 1");
+    expect(script).toContain("Invoke-CodexRelayPhysicalClick $threadItem 1 0.18 0.5");
+    expect(script).toContain("[Console]::Out.WriteLine('selected:' + $selectedTarget)");
+    expect(script).toContain("[Console]::Out.WriteLine('delivery:focus')");
     expect(script).toContain("Automations in ");
   });
 });

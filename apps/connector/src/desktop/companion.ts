@@ -18,6 +18,11 @@ import { parseDesktopLogLine } from "./log-parser.js";
 
 export type DesktopContinueMode = "focus" | "restore" | "hybrid";
 export type DesktopContinueDelivery = "focus" | "restore";
+export type DesktopContinueExecution = {
+  delivery?: DesktopContinueDelivery;
+  selectedTarget?: string;
+  stdout?: string;
+};
 
 type DesktopCompanionOptions = {
   logsRoot: string;
@@ -30,7 +35,7 @@ type DesktopCompanionOptions = {
   runContinue?: (
     windowTitle: string,
     targetLabels?: string[],
-  ) => Promise<DesktopContinueDelivery | void>;
+  ) => Promise<DesktopContinueExecution | DesktopContinueDelivery | void>;
 };
 
 type DesktopRuntimeState = Omit<DesktopStatus, "connectorId" | "connected">;
@@ -117,7 +122,7 @@ export const buildPowerShellContinueScript = (
       const label = shouldRestore ? "restore" : "focus";
       const prefix = index === 0 ? "if" : "elseif";
       const flag = shouldRestore ? "$true" : "$false";
-      return `${prefix} (Invoke-CodexRelayContinue $process ${flag}) { [Console]::Out.Write('${label}') }`;
+      return `${prefix} (Invoke-CodexRelayContinue $process ${flag}) { [Console]::Out.WriteLine('delivery:${label}') }`;
     })
     .join("\n");
   const encodedTargetLabels = targetLabels
@@ -169,12 +174,14 @@ export const buildPowerShellContinueScript = (
     "  Start-Sleep -Milliseconds 180",
     "  return $setForeground",
     "}",
-    "function Invoke-CodexRelayPhysicalClick($element, [int]$clickCount) {",
+    "function Invoke-CodexRelayPhysicalClick($element, [int]$clickCount, [double]$xRatio = 0.5, [double]$yRatio = 0.5) {",
     "  try {",
     "    $rect = $element.Current.BoundingRectangle",
     "    if ($rect.Width -gt 1 -and $rect.Height -gt 1) {",
-    "      $x = [int]($rect.X + ($rect.Width / 2))",
-    "      $y = [int]($rect.Y + ($rect.Height / 2))",
+    "      $targetXRatio = [Math]::Min([Math]::Max($xRatio, 0.05), 0.95)",
+    "      $targetYRatio = [Math]::Min([Math]::Max($yRatio, 0.05), 0.95)",
+    "      $x = [int]($rect.X + ($rect.Width * $targetXRatio))",
+    "      $y = [int]($rect.Y + ($rect.Height * $targetYRatio))",
     "      [void][CodexRelayWin32]::SetCursorPos($x, $y)",
     "      for ($click = 0; $click -lt [Math]::Max($clickCount, 1); $click++) {",
     "        [CodexRelayWin32]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)",
@@ -238,12 +245,27 @@ export const buildPowerShellContinueScript = (
     "}",
     "function Open-CodexRelayThreadItem($threadItem) {",
     "  if ($null -eq $threadItem) { return $false }",
-    "  $primaryButton = Find-CodexRelayPrimaryThreadButton $threadItem",
-    "  if ($null -ne $primaryButton -and (Invoke-CodexRelayPhysicalClick $primaryButton 1)) {",
-    "    Start-Sleep -Milliseconds 450",
+    "  try {",
+    "    $scrollPattern = $threadItem.GetCurrentPattern([System.Windows.Automation.ScrollItemPattern]::Pattern)",
+    "    if ($scrollPattern -is [System.Windows.Automation.ScrollItemPattern]) { $scrollPattern.ScrollIntoView() }",
+    "  } catch {}",
+    "  try {",
+    "    $threadItem.SetFocus()",
+    "  } catch {}",
+    "  if (Invoke-CodexRelayPhysicalClick $threadItem 1 0.18 0.5) {",
+    "    Start-Sleep -Milliseconds 650",
     "    return $true",
     "  }",
-    "  return Invoke-CodexRelayPhysicalClick $threadItem 2",
+    "  $primaryButton = Find-CodexRelayPrimaryThreadButton $threadItem",
+    "  if ($null -ne $primaryButton -and (Invoke-CodexRelayPhysicalClick $primaryButton 1 0.18 0.5)) {",
+    "    Start-Sleep -Milliseconds 650",
+    "    return $true",
+    "  }",
+    "  if (Invoke-CodexRelayPhysicalClick $threadItem 2 0.18 0.5) {",
+    "    Start-Sleep -Milliseconds 650",
+    "    return $true",
+    "  }",
+    "  return $false",
     "}",
     "function Select-CodexRelayFirstProjectThread($root, [string]$projectLabel) {",
     "  if ([string]::IsNullOrWhiteSpace($projectLabel)) { return $null }",
@@ -341,6 +363,7 @@ export const buildPowerShellContinueScript = (
     "  if ([string]::IsNullOrWhiteSpace($selectedTarget)) {",
     "    throw ('Codex target not found: ' + ($targetLabels -join ', '))",
     "  }",
+    "  [Console]::Out.WriteLine('selected:' + $selectedTarget)",
     "}",
     attemptLines,
     "else { throw 'Codex window not found' }",
@@ -351,7 +374,7 @@ const runPowerShellContinue = async (
   windowTitle: string,
   mode: DesktopContinueMode,
   targetLabels: string[] = [],
-): Promise<DesktopContinueDelivery> =>
+): Promise<DesktopContinueExecution> =>
   new Promise((resolve, reject) => {
     const script = buildPowerShellContinueScript(windowTitle, mode, targetLabels);
 
@@ -380,14 +403,53 @@ const runPowerShellContinue = async (
     });
     child.on("error", reject);
     child.on("close", (code) => {
+      const selectedTarget = stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("selected:"))
+        ?.slice("selected:".length)
+        .trim();
+      const deliveryLine = stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("delivery:"));
       if (code === 0) {
-        resolve(stdout.includes("restore") ? "restore" : "focus");
+        resolve({
+          delivery: deliveryLine?.includes("restore") ? "restore" : "focus",
+          ...(selectedTarget ? { selectedTarget } : {}),
+          ...(stdout.trim() ? { stdout: stdout.trim() } : {}),
+        });
         return;
       }
 
-      reject(new Error(stderr.trim() || `PowerShell exited with code ${code ?? "unknown"}`));
+      const trace = stdout
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .join(" | ");
+      reject(
+        new Error(
+          [
+            stderr.trim() || `PowerShell exited with code ${code ?? "unknown"}`,
+            trace ? `trace=${trace}` : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        ),
+      );
     });
   });
+
+const normalizeContinueExecution = (
+  result: DesktopContinueExecution | DesktopContinueDelivery | void,
+): DesktopContinueExecution => {
+  if (!result) {
+    return {};
+  }
+
+  if (typeof result === "string") {
+    return { delivery: result };
+  }
+
+  return result;
+};
 
 export const defaultCodexDesktopLogsRoot = (): string =>
   join(
@@ -471,7 +533,7 @@ export class DesktopCompanion extends EventEmitter {
   private readonly runContinueCommand: (
     windowTitle: string,
     targetLabels?: string[],
-  ) => Promise<DesktopContinueDelivery | void>;
+  ) => Promise<DesktopContinueExecution | DesktopContinueDelivery | void>;
   private timer: NodeJS.Timeout | null = null;
   private readonly fileOffsets = new Map<string, number>();
   private latestWorkspaceHint?: WorkspaceHint;
@@ -551,11 +613,13 @@ export class DesktopCompanion extends EventEmitter {
     }
 
     try {
-      const delivery = await this.runContinueCommand(
-        this.options.windowTitle,
-        continueTarget?.labels ?? [],
+      const execution = normalizeContinueExecution(
+        await this.runContinueCommand(
+          this.options.windowTitle,
+          continueTarget?.labels ?? [],
+        ),
       );
-      this.applyContinueSuccess(conversation, mode, delivery);
+      this.applyContinueSuccess(conversation, mode, execution);
     } catch (error) {
       this.applyContinueFailure(
         conversation,
@@ -869,8 +933,9 @@ export class DesktopCompanion extends EventEmitter {
   private applyContinueSuccess(
     conversation: ConversationRuntimeState,
     mode: DesktopConversationContinueMode,
-    delivery: DesktopContinueDelivery | void,
+    execution: DesktopContinueExecution,
   ): void {
+    const delivery = execution.delivery;
     const timestamp = this.now().toISOString();
     conversation.awaitingApproval = false;
     conversation.lastContinueSentAt = timestamp;
@@ -879,16 +944,18 @@ export class DesktopCompanion extends EventEmitter {
     if (mode === "autopilot") {
       conversation.autoContinueCount += 1;
     }
-    this.setConversationNote(
-      conversation,
+    const deliveryNote =
       mode === "autopilot"
         ? delivery === "restore"
           ? `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} con fallback visible.`
           : `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} sin restaurar ventana.`
         : delivery === "restore"
           ? `Continue manual enviado a ${conversation.conversationId} con fallback visible.`
-          : `Continue manual enviado a ${conversation.conversationId} sin restaurar ventana.`,
-    );
+          : `Continue manual enviado a ${conversation.conversationId} sin restaurar ventana.`;
+    const selectedTargetNote = execution.selectedTarget
+      ? ` UI target: ${execution.selectedTarget}.`
+      : "";
+    this.setConversationNote(conversation, `${deliveryNote}${selectedTargetNote}`);
     this.setActiveConversation(conversation.conversationId);
     this.state.note = conversation.note;
   }
