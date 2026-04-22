@@ -439,9 +439,12 @@ describe("DesktopCompanion", () => {
     expect(script).toContain("elseif (Invoke-CodexRelayContinue $process $true)");
     expect(script).toContain("function Select-CodexRelayFirstProjectThread");
     expect(script).toContain("function Find-CodexRelayPrimaryThreadButton");
+    expect(script).toContain("function Get-CodexRelayActiveViewState");
+    expect(script).toContain("function Test-CodexRelayActiveView");
     expect(script).toContain("function Open-CodexRelayThreadItem");
     expect(script).toContain("Prepare-CodexRelayWindow $process $true");
     expect(script).toContain("Invoke-CodexRelayPhysicalClick $threadItem 1 0.18 0.5");
+    expect(script).toContain("if (Test-CodexRelayActiveView $root $projectLabel $threadName) { return $true }");
     expect(script).toContain("[Console]::Out.WriteLine('selected:' + $selectedTarget)");
     expect(script).toContain("[Console]::Out.WriteLine('delivery:focus')");
     expect(script).toContain("Automations in ");
