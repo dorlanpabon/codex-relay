@@ -425,9 +425,11 @@ describe("DesktopCompanion", () => {
   });
 
   it("builds a focus-first PowerShell script in hybrid mode", () => {
-    const script = buildPowerShellContinueScript("Codex", "hybrid");
+    const script = buildPowerShellContinueScript("Codex", "hybrid", ["test_sena_inventarios"]);
 
     expect(script).toContain("if (Invoke-CodexRelayContinue $process $false)");
     expect(script).toContain("elseif (Invoke-CodexRelayContinue $process $true)");
+    expect(script).toContain("function Select-CodexRelayFirstProjectThread");
+    expect(script).toContain("Automations in ");
   });
 });
