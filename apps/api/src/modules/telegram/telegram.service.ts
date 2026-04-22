@@ -751,7 +751,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         reply_markup: buildDesktopKeyboard(status, {
           primaryConversationId: conversationId,
           primaryContinueLabel: conversation
-            ? `Continuar #${conversation.index}`
+            ? this.buildDesktopPrimaryContinueLabel(conversation)
             : "Continuar activa",
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
@@ -801,7 +801,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         reply_markup: buildDesktopKeyboard(status, {
           primaryConversationId: conversationId,
           primaryContinueLabel: conversation
-            ? `Continuar #${conversation.index}`
+            ? this.buildDesktopPrimaryContinueLabel(conversation)
             : "Continuar activa",
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
@@ -822,8 +822,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       reply_markup: buildDesktopKeyboard(status, {
         primaryContinueLabel:
           presentation.conversationViews.find((conversation) => conversation.awaitingApproval)
-            ? "Continuar pendiente"
-            : "Continuar activa",
+            ? this.buildDesktopPrimaryContinueLabel(
+                presentation.conversationViews.find((conversation) => conversation.awaitingApproval)!,
+              )
+            : presentation.conversationViews.find((conversation) => conversation.isActive)
+              ? this.buildDesktopPrimaryContinueLabel(
+                  presentation.conversationViews.find((conversation) => conversation.isActive)!,
+                )
+              : "Continuar activa",
         ...(primaryConversationId ? { primaryConversationId } : {}),
         conversations: this.buildDesktopConversationButtons(presentation),
       }),
@@ -873,7 +879,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       {
         reply_markup: buildDesktopKeyboard(status, {
           primaryConversationId: conversation.conversationId,
-          primaryContinueLabel: `Continuar #${conversation.index}`,
+          primaryContinueLabel: this.buildDesktopPrimaryContinueLabel(conversation),
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
       },
@@ -883,9 +889,33 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private buildDesktopConversationButtons(presentation: DesktopStatusView) {
     return presentation.conversationViews.slice(0, 4).map((conversation) => ({
       conversationId: conversation.conversationId,
-      continueLabel: `#${conversation.index} Continuar`.slice(0, 24),
-      inspectLabel: `#${conversation.index} Ver detalle`.slice(0, 24),
+      contextLabel: this.buildDesktopContextLabel(conversation).slice(0, 48),
+      continueLabel: `Continuar #${conversation.index}`.slice(0, 24),
+      inspectLabel: "Ver detalle",
     }));
+  }
+
+  private buildDesktopPrimaryContinueLabel(conversation: DesktopStatusView["conversationViews"][number]) {
+    return this.buildDesktopActionLabel("Continuar", conversation, 32);
+  }
+
+  private buildDesktopContextLabel(conversation: DesktopStatusView["conversationViews"][number]) {
+    const status =
+      conversation.awaitingApproval
+        ? "pendiente"
+        : conversation.isActive
+          ? "activa"
+          : conversation.statusLabel;
+    return `#${conversation.index} ${conversation.title} · ${conversation.threadLabel} · ${status}`;
+  }
+
+  private buildDesktopActionLabel(
+    action: string,
+    conversation: DesktopStatusView["conversationViews"][number],
+    maxLength: number,
+  ) {
+    const label = `${action} ${conversation.title} · ${conversation.threadLabel}`;
+    return label.length <= maxLength ? label : `${label.slice(0, Math.max(0, maxLength - 3))}...`;
   }
 
   private async bindChat(chatId: number): Promise<void> {

@@ -51,6 +51,7 @@ export type TelegramAction =
 
 export type DesktopKeyboardConversation = {
   conversationId: string;
+  contextLabel?: string;
   continueLabel: string;
   inspectLabel?: string;
 };
@@ -106,7 +107,10 @@ export const buildDesktopKeyboard = (
         callback_data: `${status.autopilotEnabled ? "deskautooff" : "deskautoon"}:${status.connectorId}`,
       },
     ],
-    ...(options?.conversations ?? []).map((conversation) =>
+    ...(options?.conversations ?? []).flatMap((conversation) => [
+      ...(conversation.contextLabel
+        ? [[{ text: conversation.contextLabel, callback_data: `deski:${conversation.conversationId}` }]]
+        : []),
       [
         {
           text: conversation.continueLabel,
@@ -119,7 +123,7 @@ export const buildDesktopKeyboard = (
             }
           : null,
       ].filter((button): button is InlineButton => button !== null),
-    ),
+    ]),
   ],
 });
 
