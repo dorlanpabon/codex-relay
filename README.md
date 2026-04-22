@@ -91,21 +91,24 @@ Variables utiles del conector:
 5. El bootstrap entonces:
 
 - crea el bot via `@BotFather`
-- intenta registrar `/run`, `/sessions`, `/continue`, `/pause` y `/abort`
+- registra el menu principal con comandos Relay y Desktop
 - guarda `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` y `TELEGRAM_CREATOR_SESSION` en `apps/api/.env.local`
 
 6. Arranca el API y envia `/start` al bot para enlazar el chat con `DEFAULT_USER_ID`.
 7. Usa estos comandos:
 
 - `/run "D:\xampp\htdocs\open_source" implementa el siguiente paso`
-- `/sessions`
+- `/sessions` para sesiones Relay creadas con `/run`
 - `/continue <sessionId>`
 - `/pause <sessionId>`
 - `/abort <sessionId>`
 - `/desktop_status`
 - `/desktop_continue [connectorId] [conversationId]`
+- `/desktop_inspect [connectorId] [conversationId]`
 - `/desktop_auto_on [maxTurnos]`
 - `/desktop_auto_off`
+
+El API tambien vuelve a registrar `setMyCommands` al arrancar, asi que el menu del bot se mantiene alineado con los comandos soportados sin recrear el bot.
 
 El bot tambien envia:
 

@@ -12,18 +12,11 @@ import {
   normalizePhoneNumber,
   sanitizeBotName,
 } from "../modules/telegram/botfather.utils.js";
+import { TELEGRAM_BOT_COMMANDS } from "../modules/telegram/telegram-bot-commands.js";
 
 const BOTFATHER = "BotFather";
 const DEFAULT_BOT_NAME = "Codex Relay Bot";
 const BOTFATHER_TIMEOUT_MS = 20000;
-const COMMANDS = [
-  { command: "run", description: "Crear una tarea remota" },
-  { command: "sessions", description: "Listar sesiones recientes" },
-  { command: "continue", description: "Continuar una sesion" },
-  { command: "pause", description: "Pausar una sesion" },
-  { command: "abort", description: "Abortar una sesion" }
-];
-
 type CliOptions = {
   phone?: string;
   botName?: string;
@@ -276,7 +269,7 @@ const sendAndWaitForBotFather = async (
 const configureBot = async (botToken: string): Promise<void> => {
   await telegramBotApi(botToken, "getMe", {});
   await telegramBotApi(botToken, "setMyCommands", {
-    commands: COMMANDS
+    commands: TELEGRAM_BOT_COMMANDS
   });
   await telegramBotApi(botToken, "setMyDescription", {
     description: "Control remoto de sesiones locales de Codex Relay."

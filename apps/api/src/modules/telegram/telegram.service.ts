@@ -26,6 +26,7 @@ import {
   type DesktopConnectorMeta,
   type DesktopStatusView,
 } from "./desktop-presenter.js";
+import { TELEGRAM_BOT_COMMANDS, TELEGRAM_START_HELP_LINES } from "./telegram-bot-commands.js";
 
 type TelegramUpdate = {
   update_id: number;
@@ -74,6 +75,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     this.running = true;
     this.startQueueWorker();
+    void this.syncBotCommands();
     void this.pollLoop();
   }
 
@@ -185,17 +187,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     if (normalizedText.startsWith("/start")) {
       await this.bindChat(chatId);
-      await this.sendMessage(
-        chatId,
-        [
-          "Codex Relay enlazado.",
-          "Usa /run <ruta> <prompt> para lanzar tareas.",
-          "Usa /sessions para ver las ultimas sesiones.",
-          "Usa /desktop_status para ver Codex Desktop.",
-          "Usa /desktop_continue 1 o /desktop_continue <proyecto> para continuar un thread.",
-          "Usa /desktop_inspect 1 para ver detalle de un thread.",
-        ].join("\n"),
-      );
+      await this.sendMessage(chatId, TELEGRAM_START_HELP_LINES.join("\n"));
       return;
     }
 
@@ -621,7 +613,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (!sessions.length) {
-      await this.sendMessage(chatId, "No hay sesiones registradas.");
+      await this.sendMessage(
+        chatId,
+        [
+          "No hay sesiones Relay registradas.",
+          "/sessions solo lista tareas creadas con /run y ejecutadas por codex app-server.",
+          "Para ver los threads de Codex Desktop usa /desktop_status.",
+        ].join("\n"),
+      );
       return;
     }
 
@@ -972,6 +971,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       ...(options?.parse_mode ? { parse_mode: options.parse_mode } : {}),
       ...(options?.reply_markup ? { reply_markup: options.reply_markup } : {}),
     });
+  }
+
+  private async syncBotCommands(): Promise<void> {
+    try {
+      await this.telegramRequest("setMyCommands", {
+        commands: TELEGRAM_BOT_COMMANDS,
+      });
+    } catch (error) {
+      this.telemetry.warn("Telegram command sync failed", {
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+    }
   }
 
   private async answerCallbackQuery(id: string, text: string): Promise<void> {
