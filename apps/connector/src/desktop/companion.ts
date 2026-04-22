@@ -241,6 +241,26 @@ const conversationActivityRank = (conversation: ConversationRuntimeState): numbe
     .map((value) => Date.parse(value))
     .find((value) => Number.isFinite(value)) ?? 0;
 
+const parseTimestamp = (value?: string): number => {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const hasPendingTurn = (conversation: ConversationRuntimeState): boolean =>
+  parseTimestamp(conversation.lastTurnStartedAt) > parseTimestamp(conversation.lastTurnCompletedAt);
+
+const hasQueuedContinue = (conversation: ConversationRuntimeState): boolean =>
+  conversation.status === "manual_continue_sent" || conversation.status === "auto_continue_sent";
+
+const isConversationVisiblyRunning = (conversation: ConversationRuntimeState): boolean =>
+  conversation.isActive &&
+  !conversation.awaitingApproval &&
+  (hasPendingTurn(conversation) || hasQueuedContinue(conversation));
+
 export class DesktopCompanion extends EventEmitter {
   private readonly platform: NodeJS.Platform;
   private readonly now: () => Date;
@@ -450,11 +470,12 @@ export class DesktopCompanion extends EventEmitter {
 
       if (signal.kind === "turn.start") {
         const conversation = this.getOrCreateConversation(signal.conversationId);
+        const signalTimestamp = signal.occurredAt ?? this.now().toISOString();
         conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
         this.setActiveConversation(signal.conversationId);
         conversation.status = "running";
         conversation.awaitingApproval = false;
-        conversation.lastTurnStartedAt = this.now().toISOString();
+        conversation.lastTurnStartedAt = signalTimestamp;
         this.setConversationNote(conversation, `Turn detectado en ${signal.conversationId}.`);
         this.state.note = conversation.note;
         this.recomputeDerivedState();
@@ -463,7 +484,7 @@ export class DesktopCompanion extends EventEmitter {
 
       const conversation = this.getOrCreateConversation(signal.conversationId);
       conversation.workspacePath = signal.workspacePath ?? this.latestWorkspacePath;
-      const completedAt = this.now().toISOString();
+      const completedAt = signal.occurredAt ?? this.now().toISOString();
       conversation.lastTurnCompletedAt = completedAt;
       if (!this.state.activeConversationId) {
         this.setActiveConversation(signal.conversationId);
@@ -538,7 +559,7 @@ export class DesktopCompanion extends EventEmitter {
 
     const conversation: ConversationRuntimeState = {
       conversationId,
-      status: "running",
+      status: "idle",
       isActive: false,
       awaitingApproval: false,
       autoContinueCount: 0,
@@ -622,6 +643,26 @@ export class DesktopCompanion extends EventEmitter {
     this.state.activeConversationId = this.state.conversations.find(
       (conversation) => conversation.isActive,
     )?.conversationId;
+    for (const conversation of this.state.conversations) {
+      if (conversation.awaitingApproval) {
+        continue;
+      }
+
+      if (isConversationVisiblyRunning(conversation)) {
+        if (conversation.status === "idle") {
+          conversation.status = "running";
+        }
+        continue;
+      }
+
+      if (
+        conversation.status === "running" ||
+        conversation.status === "manual_continue_sent" ||
+        conversation.status === "auto_continue_sent"
+      ) {
+        conversation.status = "idle";
+      }
+    }
     this.state.conversations = [...this.state.conversations].sort((left, right) => {
       if (left.awaitingApproval !== right.awaitingApproval) {
         return left.awaitingApproval ? -1 : 1;

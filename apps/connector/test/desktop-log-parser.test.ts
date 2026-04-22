@@ -32,6 +32,7 @@ describe("parseDesktopLogLine", () => {
       ),
     ).toEqual({
       kind: "workspace.hint",
+      occurredAt: "2026-04-21T05:55:43.278Z",
       workspacePath: "D:/Usuario/Descargas/dropshipping_local",
     });
   });

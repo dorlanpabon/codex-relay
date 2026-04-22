@@ -42,7 +42,7 @@ describe("desktop-presenter", () => {
       },
       {
         conversationId: "conversation-3",
-        status: "running" as const,
+        status: "idle" as const,
         isActive: false,
         awaitingApproval: false,
         autoContinueCount: 0,
@@ -82,7 +82,7 @@ describe("desktop-presenter", () => {
     expect(text).toContain("<b>Codex Desktop</b> | <b>DESKTOP-DEV</b>");
     expect(text).toContain("<b>Vista:</b> prioridad | 2/2");
     expect(text).toContain("<b>Activa:</b> #1 orders_codex");
-    expect(text).toContain("<b>#1 orders_codex</b> <i>requiere accion | activa</i>");
+    expect(text).toContain("<b>#1 orders_codex</b> <i>activa</i>");
     expect(text).toContain("<b>Ruta:</b> <code>D:/xampp/htdocs/orders_codex</code>");
     expect(text).toContain("<b>Comandos:</b>\n/desktop_continue conversa\n/desktop_inspect conversa");
     expect(text).toContain("Se ocultaron 1 registros historicos del mismo repo.");
@@ -108,12 +108,34 @@ describe("desktop-presenter", () => {
     const pendingView = buildDesktopStatusView(status, meta, "pending");
 
     expect(inactiveView.filter).toBe("inactive");
-    expect(inactiveView.conversationViews).toHaveLength(2);
-    expect(inactiveView.conversationViews[0]?.title).toBe("orders_codex");
-    expect(pendingView.conversationViews).toHaveLength(1);
-    expect(pendingView.conversationViews[0]?.title).toBe("orders_codex");
+    expect(inactiveView.conversationViews).toHaveLength(1);
+    expect(inactiveView.conversationViews[0]?.title).toBe("agent_dropshipping");
+    expect(pendingView.conversationViews).toHaveLength(0);
     expect(parseDesktopStatusFilter("inactivos")).toBe("inactive");
     expect(parseDesktopStatusFilter("all")).toBe("all");
+  });
+
+  it("keeps pending threads visible when they are current threads, not hidden history", () => {
+    const pendingStatus = {
+      ...status,
+      activeConversationId: undefined,
+      conversations: [
+        {
+          conversationId: "conversation-9",
+          status: "waiting_manual" as const,
+          isActive: false,
+          awaitingApproval: true,
+          autoContinueCount: 0,
+          workspacePath: "D:/xampp/htdocs/tv_controller",
+          lastTurnCompletedAt: "2026-04-22T12:03:00.000Z",
+          note: "Turn completo en conversation-9. Esperando aprobacion remota.",
+        },
+      ],
+    };
+
+    const pendingView = buildDesktopStatusView(pendingStatus, meta, "pending");
+    expect(pendingView.conversationViews).toHaveLength(1);
+    expect(pendingView.conversationViews[0]?.title).toBe("tv_controller");
   });
 
   it("resolves conversation references by visible index, repo name and hidden alias id", () => {

@@ -116,6 +116,8 @@ const statusLabel = (conversation: DesktopConversation): string => {
   switch (conversation.status) {
     case "running":
       return "trabajando";
+    case "idle":
+      return "inactivo";
     case "waiting_manual":
       return "esperando aprobacion";
     case "manual_continue_sent":
@@ -321,8 +323,8 @@ const createConversationSeed = (
     statusLabel: statusLabel(conversation),
     isActive: conversation.isActive,
     awaitingApproval: conversation.awaitingApproval,
-    hasWorkingSource: conversation.isActive || isWorkingStatusLabel(statusLabel(conversation)),
-    hasInactiveSource: !conversation.isActive,
+    hasWorkingSource: isWorkingStatusLabel(statusLabel(conversation)),
+    hasInactiveSource: !isWorkingStatusLabel(statusLabel(conversation)),
     hasPendingSource: conversation.awaitingApproval,
     hiddenDuplicateCount: 0,
     sourceConversationIds: [conversation.conversationId],
@@ -347,11 +349,6 @@ const collapseConversationGroup = (group: ConversationSeed[]): ConversationSeed[
   return [
     {
       ...representative,
-      awaitingApproval: group.some((conversation) => conversation.awaitingApproval),
-      isActive: group.some((conversation) => conversation.isActive),
-      hasWorkingSource: group.some((conversation) => conversation.hasWorkingSource),
-      hasInactiveSource: group.some((conversation) => conversation.hasInactiveSource),
-      hasPendingSource: group.some((conversation) => conversation.hasPendingSource),
       hiddenDuplicateCount: group.length - 1,
       sourceConversationIds: group.map((conversation) => conversation.conversationId),
       sourceShortIds: group.map((conversation) => conversation.shortId),

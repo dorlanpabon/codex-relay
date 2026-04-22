@@ -3,16 +3,26 @@ export type DesktopLogSignal =
       kind: "turn.start";
       conversationId: string;
       workspacePath?: string;
+      occurredAt?: string;
     }
   | {
       kind: "turn.complete";
       conversationId: string;
       workspacePath?: string;
+      occurredAt?: string;
     }
   | {
       kind: "workspace.hint";
       workspacePath: string;
+      occurredAt?: string;
     };
+
+const extractTimestamp = (line: string): string | undefined => {
+  const match = line.match(
+    /^(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\b/,
+  );
+  return match?.groups?.timestamp;
+};
 
 const extractConversationId = (line: string): string | null => {
   const match = line.match(/\bconversationId=([^\s]+)/);
@@ -36,12 +46,14 @@ const extractWorkspacePath = (line: string): string | null => {
 export const parseDesktopLogLine = (line: string): DesktopLogSignal | null => {
   const conversationId = extractConversationId(line);
   const workspacePath = extractWorkspacePath(line);
+  const occurredAt = extractTimestamp(line);
 
   if (conversationId && line.includes("method=turn/start")) {
     return {
       kind: "turn.start",
       conversationId,
       ...(workspacePath ? { workspacePath } : {}),
+      ...(occurredAt ? { occurredAt } : {}),
     };
   }
 
@@ -50,6 +62,7 @@ export const parseDesktopLogLine = (line: string): DesktopLogSignal | null => {
       kind: "turn.complete",
       conversationId,
       ...(workspacePath ? { workspacePath } : {}),
+      ...(occurredAt ? { occurredAt } : {}),
     };
   }
 
@@ -57,6 +70,7 @@ export const parseDesktopLogLine = (line: string): DesktopLogSignal | null => {
     return {
       kind: "workspace.hint",
       workspacePath,
+      ...(occurredAt ? { occurredAt } : {}),
     };
   }
 

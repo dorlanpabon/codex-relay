@@ -153,6 +153,7 @@ export const SessionResumePayloadSchema = z.object({
 
 export const DesktopConversationStatusSchema = z.enum([
   "running",
+  "idle",
   "waiting_manual",
   "manual_continue_sent",
   "auto_continue_sent",

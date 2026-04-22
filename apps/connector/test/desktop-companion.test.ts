@@ -139,6 +139,52 @@ describe("DesktopCompanion", () => {
     );
   });
 
+  it("treats only the visible active thread as running and preserves log timestamps", async () => {
+    const tempDir = mkdtempSync(join(os.tmpdir(), "codex-relay-desktop-"));
+    tempDirs.push(tempDir);
+    const dayDir = join(tempDir, "2026", "04", "22");
+    mkdirSync(dayDir, { recursive: true });
+    const logPath = join(dayDir, "codex.log");
+    writeFileSync(
+      logPath,
+      [
+        "2026-04-22T12:00:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-1 method=turn/start",
+        "2026-04-22T12:05:00.000Z info [ElectronAppServerConnection] response_routed conversationId=conversation-2 method=turn/start",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const companion = new DesktopCompanion({
+      logsRoot: tempDir,
+      pollIntervalMs: 60_000,
+      defaultMaxAutoTurns: 3,
+      platform: "win32",
+      windowTitle: "Codex",
+      runContinue: vi.fn().mockResolvedValue("focus"),
+      now: () => new Date("2026-04-22T14:00:00.000Z"),
+    });
+
+    await companion.start();
+
+    expect(companion.getStatus().activeConversationId).toBe("conversation-2");
+    expect(companion.getStatus().conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          conversationId: "conversation-1",
+          status: "idle",
+          isActive: false,
+          lastTurnStartedAt: "2026-04-22T12:00:00.000Z",
+        }),
+        expect.objectContaining({
+          conversationId: "conversation-2",
+          status: "running",
+          isActive: true,
+          lastTurnStartedAt: "2026-04-22T12:05:00.000Z",
+        }),
+      ]),
+    );
+  });
+
   it("exposes the packaged desktop logs path by default", () => {
     expect(defaultCodexDesktopLogsRoot()).toContain("OpenAI.Codex_2p2nqsd0c76g0");
   });
