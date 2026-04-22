@@ -1,5 +1,8 @@
 export const TELEGRAM_BOT_COMMANDS = [
   { command: "desktop_status", description: "Ver estado de Codex Desktop" },
+  { command: "desktop_working", description: "Ver threads trabajando" },
+  { command: "desktop_inactive", description: "Ver threads no activos" },
+  { command: "desktop_all", description: "Ver todos los threads Desktop" },
   { command: "desktop_continue", description: "Continuar un thread Desktop" },
   { command: "desktop_inspect", description: "Ver detalle de un thread Desktop" },
   { command: "desktop_auto_on", description: "Encender autopilot Desktop" },
@@ -14,6 +17,7 @@ export const TELEGRAM_BOT_COMMANDS = [
 export const TELEGRAM_START_HELP_LINES = [
   "Codex Relay enlazado.",
   "Usa /desktop_status para ver Codex Desktop.",
+  "Usa /desktop_working, /desktop_inactive o /desktop_all para filtrar la vista.",
   "Usa /desktop_continue 1 o /desktop_continue <proyecto> para continuar un thread.",
   "Usa /desktop_inspect 1 para ver detalle de un thread.",
   "Usa /run <ruta> <prompt> para lanzar tareas Relay por codex app-server.",

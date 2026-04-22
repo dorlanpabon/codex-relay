@@ -103,12 +103,16 @@ Variables utiles del conector:
 - `/pause <sessionId>`
 - `/abort <sessionId>`
 - `/desktop_status`
+- `/desktop_working`
+- `/desktop_inactive`
+- `/desktop_all`
 - `/desktop_continue [connectorId] [conversationId]`
 - `/desktop_inspect [connectorId] [conversationId]`
 - `/desktop_auto_on [maxTurnos]`
 - `/desktop_auto_off`
 
 El API tambien vuelve a registrar `setMyCommands` al arrancar, asi que el menu del bot se mantiene alineado con los comandos soportados sin recrear el bot.
+`/desktop_status` tambien acepta filtros por argumento: `working`, `inactive`, `pending`, `all`.
 
 El bot tambien envia:
 
@@ -141,6 +145,7 @@ Notas:
 - El dashboard tambien expone una tarjeta `Codex Desktop` con estado, `Autopilot` y una lista de conversaciones detectadas para continuar un thread especifico.
 - La API expone `GET /connectors/desktop/status` y `POST /connectors/desktop/commands` para el companion de Windows.
 - El companion ya rastrea multiples conversaciones de Codex Desktop, marca cuales quedaron esperando aprobacion y solo envia `continue` automatico cuando el thread terminado sigue siendo el thread activo visible.
+- El resumen mostrado hoy como `Ultimo estado` en Telegram viene de eventos detectados en los logs locales del companion; no es todavia el contenido completo del ultimo mensaje del thread.
 - El connector hub ya no pierde el estado `connected` por cierres de sockets viejos durante reconnects.
 - En Windows, `pnpm build` reutiliza el Prisma Client existente si `query_engine-windows.dll.node` esta bloqueado por un proceso del API ya corriendo.
 - En esta maquina, el companion detecta logs reales de Codex Desktop y ya puede enviar `continue` usando foco Win32 + teclado simulado. Por defecto primero intenta continuar sin restaurar la ventana; si Windows bloquea el foco o la inyeccion de teclado, cae al fallback visible y deja el detalle exacto en `note`.

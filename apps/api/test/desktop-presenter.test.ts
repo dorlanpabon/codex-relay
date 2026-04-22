@@ -4,6 +4,7 @@ import {
   buildDesktopStatusView,
   formatDesktopConversationInspectText,
   formatDesktopStatusText,
+  parseDesktopStatusFilter,
   resolveDesktopConversationReference,
 } from "../src/modules/telegram/desktop-presenter.js";
 
@@ -79,10 +80,13 @@ describe("desktop-presenter", () => {
     const text = formatDesktopStatusText(view);
 
     expect(text).toContain("<b>Codex Desktop</b> | <b>DESKTOP-DEV</b>");
+    expect(text).toContain("<b>Vista:</b> prioridad | 2/2");
     expect(text).toContain("<b>Activa:</b> #1 orders_codex");
-    expect(text).toContain("<b>#1 orders_codex</b> <i>activa</i>");
+    expect(text).toContain("<b>#1 orders_codex</b> <i>requiere accion | activa</i>");
     expect(text).toContain("<b>Ruta:</b> <code>D:/xampp/htdocs/orders_codex</code>");
-    expect(text).toContain("<code>/desktop_continue 1</code> | <code>/desktop_inspect 1</code>");
+    expect(text).toContain(
+      "<code>/desktop_continue conversa</code> | <code>/desktop_inspect conversa</code>",
+    );
     expect(text).toContain("Se ocultaron 1 registros historicos del mismo repo.");
     expect(text).not.toContain("conversation-2");
   });
@@ -96,7 +100,22 @@ describe("desktop-presenter", () => {
 
     expect(inspectText).toContain("<b>Thread #2</b> agent_dropshipping");
     expect(inspectText).toContain("<b>Thread:</b> Pulir onboarding");
-    expect(inspectText).toContain("<code>/desktop_continue 2</code> | <code>/desktop_inspect 2</code>");
+    expect(inspectText).toContain(
+      "<code>/desktop_continue conversa</code> | <code>/desktop_inspect conversa</code>",
+    );
+  });
+
+  it("supports explicit status filters", () => {
+    const inactiveView = buildDesktopStatusView(status, meta, "inactive");
+    const pendingView = buildDesktopStatusView(status, meta, "pending");
+
+    expect(inactiveView.filter).toBe("inactive");
+    expect(inactiveView.conversationViews).toHaveLength(2);
+    expect(inactiveView.conversationViews[0]?.title).toBe("orders_codex");
+    expect(pendingView.conversationViews).toHaveLength(1);
+    expect(pendingView.conversationViews[0]?.title).toBe("orders_codex");
+    expect(parseDesktopStatusFilter("inactivos")).toBe("inactive");
+    expect(parseDesktopStatusFilter("all")).toBe("all");
   });
 
   it("resolves conversation references by visible index, repo name and hidden alias id", () => {

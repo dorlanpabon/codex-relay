@@ -12,6 +12,7 @@ describe("@codex-relay/telegram", () => {
       {
         primaryConversationId: "conversation-1",
         primaryContinueLabel: "Continuar orders_codex",
+        statusFilter: "inactive",
         conversations: [
           {
             conversationId: "conversation-1",
@@ -24,7 +25,9 @@ describe("@codex-relay/telegram", () => {
     );
 
     expect(keyboard.inline_keyboard[0]?.[0]?.callback_data).toBe("deskc:conversation-1");
-    expect(keyboard.inline_keyboard[0]?.[1]?.callback_data).toBe("deskstatus:connector-1");
+    expect(keyboard.inline_keyboard[0]?.[1]?.callback_data).toBe(
+      "deskstatus:connector-1:inactive",
+    );
     expect(keyboard.inline_keyboard[2]?.[0]?.text).toBe("#1 orders_codex | pendiente | +1 oculto");
     expect(keyboard.inline_keyboard[2]?.[0]?.callback_data).toBe("deski:conversation-1");
     expect(keyboard.inline_keyboard[3]?.[0]?.text).toBe("Continuar orders_codex");
@@ -41,9 +44,10 @@ describe("@codex-relay/telegram", () => {
   });
 
   it("parses desktop refresh callbacks", () => {
-    expect(parseCallbackData("deskstatus:connector-1")).toEqual({
+    expect(parseCallbackData("deskstatus:connector-1:inactive")).toEqual({
       kind: "desktop.refresh",
       connectorId: "connector-1",
+      filter: "inactive",
     });
   });
 

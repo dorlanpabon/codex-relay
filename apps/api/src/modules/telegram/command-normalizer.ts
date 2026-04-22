@@ -7,6 +7,18 @@ const DIRECT_ALIASES = new Map<string, string>([
   ["/desktop_status", "/desktop_status"],
   ["/desktop-status", "/desktop_status"],
   ["/desktopstatus", "/desktop_status"],
+  ["/desktop_all", "/desktop_status all"],
+  ["/desktop-all", "/desktop_status all"],
+  ["/desktopall", "/desktop_status all"],
+  ["/desktop_working", "/desktop_status working"],
+  ["/desktop-working", "/desktop_status working"],
+  ["/desktopworking", "/desktop_status working"],
+  ["/desktop_inactive", "/desktop_status inactive"],
+  ["/desktop-inactive", "/desktop_status inactive"],
+  ["/desktopinactive", "/desktop_status inactive"],
+  ["/desktop_pending", "/desktop_status pending"],
+  ["/desktop-pending", "/desktop_status pending"],
+  ["/desktoppending", "/desktop_status pending"],
   ["/desktop_continue", "/desktop_continue"],
   ["/desktop-continue", "/desktop_continue"],
   ["/desktopcontinue", "/desktop_continue"],
@@ -42,6 +54,22 @@ export const normalizeTelegramCommandInput = (text: string): string => {
 
   if (DESKTOP_HEAD_ALIASES.has(first) && second === "status") {
     return ["/desktop_status", ...remainder].join(" ").trim();
+  }
+
+  if (DESKTOP_HEAD_ALIASES.has(first) && second === "all") {
+    return ["/desktop_status", "all", ...remainder].join(" ").trim();
+  }
+
+  if (DESKTOP_HEAD_ALIASES.has(first) && second === "working") {
+    return ["/desktop_status", "working", ...remainder].join(" ").trim();
+  }
+
+  if (DESKTOP_HEAD_ALIASES.has(first) && second === "inactive") {
+    return ["/desktop_status", "inactive", ...remainder].join(" ").trim();
+  }
+
+  if (DESKTOP_HEAD_ALIASES.has(first) && second === "pending") {
+    return ["/desktop_status", "pending", ...remainder].join(" ").trim();
   }
 
   if (DESKTOP_HEAD_ALIASES.has(first) && second === "continue") {

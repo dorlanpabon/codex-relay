@@ -25,6 +25,9 @@ export type DesktopConversationView = {
   statusLabel: string;
   isActive: boolean;
   awaitingApproval: boolean;
+  hasWorkingSource: boolean;
+  hasInactiveSource: boolean;
+  hasPendingSource: boolean;
   hiddenDuplicateCount: number;
   sourceConversationIds: string[];
   sourceShortIds: string[];
@@ -41,7 +44,11 @@ export type DesktopStatusView = {
   summaryLines: string[];
   conversationViews: DesktopConversationView[];
   note: string | undefined;
+  filter: DesktopStatusFilter;
+  totalConversationCount: number;
 };
+
+export type DesktopStatusFilter = "priority" | "working" | "inactive" | "pending" | "all";
 
 type ConversationSeed = Omit<
   DesktopConversationView,
@@ -52,6 +59,30 @@ type ConversationSeed = Omit<
 
 const normalizeLookupValue = (value: string): string =>
   value.trim().toLowerCase().replace(/[_\s-]+/g, "");
+
+const DESKTOP_STATUS_FILTER_ALIASES: Record<string, DesktopStatusFilter> = {
+  all: "all",
+  todos: "all",
+  todo: "all",
+  working: "working",
+  work: "working",
+  activos: "working",
+  activo: "working",
+  trabajando: "working",
+  running: "working",
+  inactive: "inactive",
+  inactivos: "inactive",
+  inactivo: "inactive",
+  idle: "inactive",
+  pending: "pending",
+  pendientes: "pending",
+  pendiente: "pending",
+  waiting: "pending",
+  manual: "pending",
+  default: "priority",
+  prioridad: "priority",
+  priority: "priority",
+};
 
 const escapeHtml = (value: string): string =>
   value
@@ -98,6 +129,11 @@ const statusLabel = (conversation: DesktopConversation): string => {
   }
 };
 
+const isWorkingStatusLabel = (value: string): boolean =>
+  value === "trabajando" ||
+  value === "continue manual enviado" ||
+  value === "autopilot continuo";
+
 const formatDesktopTimestamp = (value?: string): string | undefined => {
   if (!value) {
     return undefined;
@@ -113,6 +149,31 @@ const formatDesktopTimestamp = (value?: string): string | undefined => {
     timeStyle: "short",
     hour12: false,
   }).format(parsed);
+};
+
+export const parseDesktopStatusFilter = (
+  value?: string,
+): DesktopStatusFilter | null => {
+  if (!value) {
+    return null;
+  }
+
+  return DESKTOP_STATUS_FILTER_ALIASES[value.trim().toLowerCase()] ?? null;
+};
+
+const desktopStatusFilterLabel = (filter: DesktopStatusFilter): string => {
+  switch (filter) {
+    case "all":
+      return "todos";
+    case "working":
+      return "trabajando";
+    case "inactive":
+      return "inactivos";
+    case "pending":
+      return "pendientes";
+    default:
+      return "prioridad";
+  }
 };
 
 const parseTimestamp = (value?: string): number => {
@@ -260,6 +321,9 @@ const createConversationSeed = (
     statusLabel: statusLabel(conversation),
     isActive: conversation.isActive,
     awaitingApproval: conversation.awaitingApproval,
+    hasWorkingSource: conversation.isActive || isWorkingStatusLabel(statusLabel(conversation)),
+    hasInactiveSource: !conversation.isActive,
+    hasPendingSource: conversation.awaitingApproval,
     hiddenDuplicateCount: 0,
     sourceConversationIds: [conversation.conversationId],
     sourceShortIds: [conversation.conversationId.slice(0, 8)],
@@ -283,6 +347,11 @@ const collapseConversationGroup = (group: ConversationSeed[]): ConversationSeed[
   return [
     {
       ...representative,
+      awaitingApproval: group.some((conversation) => conversation.awaitingApproval),
+      isActive: group.some((conversation) => conversation.isActive),
+      hasWorkingSource: group.some((conversation) => conversation.hasWorkingSource),
+      hasInactiveSource: group.some((conversation) => conversation.hasInactiveSource),
+      hasPendingSource: group.some((conversation) => conversation.hasPendingSource),
       hiddenDuplicateCount: group.length - 1,
       sourceConversationIds: group.map((conversation) => conversation.conversationId),
       sourceShortIds: group.map((conversation) => conversation.shortId),
@@ -325,8 +394,8 @@ const buildConversationLookup = (
     ...conversation,
     index: index + 1,
     summaryLine: conversation.summaryLineRaw,
-    commandText: `/desktop_continue ${index + 1}`,
-    inspectCommandText: `/desktop_inspect ${index + 1}`,
+    commandText: `/desktop_continue ${conversation.shortId}`,
+    inspectCommandText: `/desktop_inspect ${conversation.shortId}`,
   }));
 
   return conversationViews.map((conversation) => ({
@@ -357,13 +426,20 @@ export const rewriteDesktopNote = (
 export const buildDesktopStatusView = (
   status: DesktopStatus,
   meta: DesktopConnectorMeta,
+  filter: DesktopStatusFilter = "priority",
 ): DesktopStatusView => {
-  const conversationViews = buildConversationLookup(status, meta);
-  const activeConversation = conversationViews.find((conversation) =>
+  const allConversationViews = buildConversationLookup(status, meta);
+  const activeConversation = allConversationViews.find((conversation) =>
     conversation.sourceConversationIds.includes(status.activeConversationId ?? ""),
   );
-  const lastCompletedConversation = conversationViews.find((conversation) =>
+  const lastCompletedConversation = allConversationViews.find((conversation) =>
     conversation.sourceConversationIds.includes(status.lastCompletedConversationId ?? ""),
+  );
+  const conversationViews = filterDesktopConversationViews(allConversationViews, filter).map(
+    (conversation, index) => ({
+      ...conversation,
+      index: index + 1,
+    }),
   );
 
   return {
@@ -371,14 +447,38 @@ export const buildDesktopStatusView = (
     summaryLines: [
       `Companion: ${status.desktopAutomationReady ? "listo" : "no listo"}`,
       `Autopilot: ${status.autopilotEnabled ? "encendido" : "apagado"} | Auto-turnos: ${status.autoContinueCount}/${status.maxAutoTurns}`,
+      `Vista: ${desktopStatusFilterLabel(filter)} | ${conversationViews.length}/${allConversationViews.length}`,
       activeConversation ? `Activa: #${activeConversation.index} ${activeConversation.title}` : null,
       lastCompletedConversation
         ? `Ultima completa: #${lastCompletedConversation.index} ${lastCompletedConversation.title}`
         : null,
     ].filter((line): line is string => Boolean(line)),
     conversationViews,
-    note: rewriteDesktopNote(status.note, conversationViews),
+    note: rewriteDesktopNote(status.note, allConversationViews),
+    filter,
+    totalConversationCount: allConversationViews.length,
   };
+};
+
+const isWorkingConversation = (conversation: DesktopConversationView): boolean =>
+  conversation.hasWorkingSource;
+
+const filterDesktopConversationViews = (
+  conversations: DesktopConversationView[],
+  filter: DesktopStatusFilter,
+): DesktopConversationView[] => {
+  switch (filter) {
+    case "all":
+      return conversations;
+    case "working":
+      return conversations.filter((conversation) => isWorkingConversation(conversation));
+    case "inactive":
+      return conversations.filter((conversation) => conversation.hasInactiveSource);
+    case "pending":
+      return conversations.filter((conversation) => conversation.hasPendingSource);
+    default:
+      return conversations;
+  }
 };
 
 const formatMetaLine = (label: string, value: string): string =>
@@ -436,20 +536,25 @@ const formatConversationBlock = (conversation: DesktopConversationView): string 
     .join("\n");
 
 export const formatDesktopStatusText = (view: DesktopStatusView): string => {
-  const visibleConversations = view.conversationViews.slice(0, 6);
+  const visibleLimit = view.filter === "all" ? 12 : 8;
+  const visibleConversations = view.conversationViews.slice(0, visibleLimit);
   const conversationBlocks = visibleConversations.map((conversation) =>
     formatConversationBlock(conversation),
   );
   const hiddenConversationCount = Math.max(0, view.conversationViews.length - visibleConversations.length);
+  const outsideFilterCount = Math.max(0, view.totalConversationCount - view.conversationViews.length);
 
   return [
     `<b>Codex Desktop</b> | <b>${escapeHtml(view.machineLabel)}</b>`,
     ...view.summaryLines.map((line) => formatSummaryLine(line)),
     view.note ? formatMetaLine("Nota", view.note) : null,
-    conversationBlocks.length ? "" : null,
+    conversationBlocks.length ? "" : `<i>No hay conversaciones en esta vista.</i>`,
     ...conversationBlocks.flatMap((block, index) => (index === 0 ? [block] : ["", block])),
+    outsideFilterCount > 0
+      ? `\n<i>Hay ${outsideFilterCount} conversaciones fuera del filtro actual.</i>`
+      : null,
     hiddenConversationCount > 0
-      ? `\n<i>Hay ${hiddenConversationCount} conversaciones adicionales fuera de esta vista.</i>`
+      ? `\n<i>Hay ${hiddenConversationCount} conversaciones adicionales en esta vista.</i>`
       : null,
   ]
     .filter((line): line is string => line !== null)

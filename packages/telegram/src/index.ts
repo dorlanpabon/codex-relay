@@ -10,6 +10,8 @@ type InlineButton = {
   callback_data: string;
 };
 
+type DesktopStatusFilter = "priority" | "working" | "inactive" | "pending" | "all";
+
 export type InlineKeyboardMarkup = {
   inline_keyboard: InlineButton[][];
 };
@@ -47,6 +49,7 @@ export type TelegramAction =
   | {
       kind: "desktop.refresh";
       connectorId?: string;
+      filter?: DesktopStatusFilter;
     };
 
 export type DesktopKeyboardConversation = {
@@ -86,6 +89,7 @@ export const buildDesktopKeyboard = (
     primaryConversationId?: string;
     primaryContinueLabel?: string;
     conversations?: DesktopKeyboardConversation[];
+    statusFilter?: DesktopStatusFilter;
   },
 ): InlineKeyboardMarkup => ({
   inline_keyboard: [
@@ -98,7 +102,10 @@ export const buildDesktopKeyboard = (
       },
       {
         text: "Actualizar",
-        callback_data: `deskstatus:${status.connectorId}`,
+        callback_data:
+          options?.statusFilter && options.statusFilter !== "priority"
+            ? `deskstatus:${status.connectorId}:${options.statusFilter}`
+            : `deskstatus:${status.connectorId}`,
       },
     ],
     [
@@ -183,9 +190,11 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
   }
 
   if (input.startsWith("deskstatus:")) {
+    const [, connectorId, filter] = input.split(":");
     return {
       kind: "desktop.refresh",
-      connectorId: input.slice("deskstatus:".length),
+      ...(connectorId ? { connectorId } : {}),
+      ...(filter ? { filter: filter as DesktopStatusFilter } : {}),
     };
   }
 

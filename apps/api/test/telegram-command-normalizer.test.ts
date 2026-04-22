@@ -8,6 +8,8 @@ describe("normalizeTelegramCommandInput", () => {
       "/desktop_status connector-1",
     );
     expect(normalizeTelegramCommandInput("/desktop-status")).toBe("/desktop_status");
+    expect(normalizeTelegramCommandInput("/desktop_all")).toBe("/desktop_status all");
+    expect(normalizeTelegramCommandInput("/desktop inactive")).toBe("/desktop_status inactive");
   });
 
   it("accepts desktop continue aliases", () => {
