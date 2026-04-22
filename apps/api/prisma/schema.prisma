@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String      @id @default(cuid())
+  email          String?     @unique
+  telegramChatId String?
+  connectors     Connector[]
+  sessions       Session[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+model Connector {
+  id               String    @id
+  ownerId          String
+  owner            User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  machineName      String
+  platform         String
+  codexVersion     String?
+  appServerReady   Boolean   @default(false)
+  pairingTokenHash String
+  status           String    @default("pending")
+  lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  projects         Project[]
+  sessions         Session[]
+}
+
+model Project {
+  id          String    @id
+  connectorId String
+  connector   Connector @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  name        String
+  repoPath    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  sessions    Session[]
+
+  @@unique([connectorId, repoPath])
+}
+
+model Session {
+  id                   String            @id
+  ownerId              String
+  owner                User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  connectorId          String
+  connector            Connector         @relation(fields: [connectorId], references: [id], onDelete: Cascade)
+  projectId            String
+  project              Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  threadId             String?
+  prompt               String
+  status               String
+  autoContinueMode     String
+  autoContinueMaxTurns Int
+  autoContinueTurns    Int               @default(0)
+  continuePrompt       String
+  latestSummary        String?
+  commands             Command[]
+  events               SessionEvent[]
+  approvals            ApprovalRequest[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+}
+
+model SessionEvent {
+  id         String   @id @default(cuid())
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type       String
+  severity   String
+  summary    String
+  rawRef     String?
+  rawPayload Json?
+  createdAt  DateTime @default(now())
+}
+
+model ApprovalRequest {
+  id         String   @id
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  kind       String
+  message    String
+  options    Json
+  status     String   @default("pending")
+  decision   String?
+  expiresAt  DateTime?
+  resolvedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Command {
+  id         String   @id @default(cuid())
+  sessionId  String
+  session    Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type       String
+  status     String   @default("queued")
+  approvalId String?
+  decision   String?
+  payload    Json?
+  error      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+

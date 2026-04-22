@@ -1,0 +1,38 @@
+{
+  "name": "@codex-relay/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm prisma:generate && tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prisma:generate": "tsx src/scripts/prisma-command.ts generate",
+    "prisma:push": "tsx src/scripts/prisma-command.ts db push",
+    "start": "node dist/main.js",
+    "telegram:create-bot": "tsx src/scripts/telegram-create-bot.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@codex-relay/contracts": "workspace:*",
+    "@codex-relay/telegram": "workspace:*",
+    "@fastify/cors": "^11.1.0",
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-fastify": "^11.1.6",
+    "@prisma/client": "^6.17.1",
+    "bullmq": "^5.61.0",
+    "dotenv": "^17.4.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "telegram": "^2.26.22",
+    "ws": "^8.18.3",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "prisma": "^6.17.1",
+    "tsx": "^4.20.6"
+  }
+}

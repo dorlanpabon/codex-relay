@@ -1,0 +1,28 @@
+{
+  "name": "codex-relay",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "doctor": "node ./scripts/doctor.mjs",
+    "infra:down": "docker compose down",
+    "infra:up": "docker compose up -d",
+    "lint": "turbo run lint",
+    "local:down": "powershell -ExecutionPolicy Bypass -File ./scripts/local-stack.ps1 -Action down",
+    "local:status": "powershell -ExecutionPolicy Bypass -File ./scripts/local-stack.ps1 -Action status",
+    "local:up": "powershell -ExecutionPolicy Bypass -File ./scripts/local-stack.ps1 -Action up",
+    "prisma:push": "pnpm --filter @codex-relay/api prisma:push",
+    "test": "turbo run test",
+    "telegram:create-bot": "pnpm --filter @codex-relay/api telegram:create-bot",
+    "typecheck": "turbo run typecheck",
+    "prisma:generate": "pnpm --filter @codex-relay/api prisma:generate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "turbo": "^2.5.8",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
