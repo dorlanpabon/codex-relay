@@ -19,6 +19,15 @@ describe("normalizeTelegramCommandInput", () => {
     );
   });
 
+  it("accepts desktop inspect aliases", () => {
+    expect(normalizeTelegramCommandInput("/desktop inspect 2")).toBe(
+      "/desktop_inspect 2",
+    );
+    expect(normalizeTelegramCommandInput("/DESKTOP-INSPECT agent_dropshipping")).toBe(
+      "/desktop_inspect agent_dropshipping",
+    );
+  });
+
   it("keeps the rest of run payload intact enough for parsing", () => {
     expect(normalizeTelegramCommandInput('/RUN "D:\\repo" corrige el bug')).toBe(
       '/run "D:\\repo" corrige el bug',

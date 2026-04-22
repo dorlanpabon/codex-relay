@@ -10,6 +10,9 @@ const DIRECT_ALIASES = new Map<string, string>([
   ["/desktop_continue", "/desktop_continue"],
   ["/desktop-continue", "/desktop_continue"],
   ["/desktopcontinue", "/desktop_continue"],
+  ["/desktop_inspect", "/desktop_inspect"],
+  ["/desktop-inspect", "/desktop_inspect"],
+  ["/desktopinspect", "/desktop_inspect"],
   ["/desktop_auto_on", "/desktop_auto_on"],
   ["/desktop-auto-on", "/desktop_auto_on"],
   ["/desktopautoon", "/desktop_auto_on"],
@@ -43,6 +46,10 @@ export const normalizeTelegramCommandInput = (text: string): string => {
 
   if (DESKTOP_HEAD_ALIASES.has(first) && second === "continue") {
     return ["/desktop_continue", ...remainder].join(" ").trim();
+  }
+
+  if (DESKTOP_HEAD_ALIASES.has(first) && second === "inspect") {
+    return ["/desktop_inspect", ...remainder].join(" ").trim();
   }
 
   if (DESKTOP_HEAD_ALIASES.has(first) && second === "auto_on") {

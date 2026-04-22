@@ -19,6 +19,7 @@ import { TasksService } from "../tasks/tasks.service.js";
 import { normalizeTelegramCommandInput } from "./command-normalizer.js";
 import {
   buildDesktopStatusView,
+  formatDesktopConversationInspectText,
   formatDesktopStatusText,
   resolveDesktopConversationReference,
   rewriteDesktopNote,
@@ -191,6 +192,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           "Usa /sessions para ver las ultimas sesiones.",
           "Usa /desktop_status para ver Codex Desktop.",
           "Usa /desktop_continue 1 o /desktop_continue <proyecto> para continuar un thread.",
+          "Usa /desktop_inspect 1 para ver detalle de un thread.",
         ].join("\n"),
       );
       return;
@@ -214,6 +216,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     if (normalizedText.startsWith("/desktop_continue")) {
       await this.handleDesktopCommand(chatId, userId, normalizedText, "continue_active");
+      return;
+    }
+
+    if (normalizedText.startsWith("/desktop_inspect")) {
+      await this.handleDesktopInspectCommand(chatId, userId, normalizedText);
       return;
     }
 
@@ -249,7 +256,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     await this.sendMessage(
       chatId,
-      "Comando no reconocido. Usa /run, /sessions, /continue, /pause o /abort.",
+      "Comando no reconocido. Usa /run, /sessions, /desktop_status, /desktop_continue, /desktop_inspect, /continue, /pause o /abort.",
     );
   }
 
@@ -288,6 +295,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         decision: action.decision,
       });
       await this.answerCallbackQuery(query.id, `Approval ${action.decision}`);
+      return;
+    }
+
+    if (action.kind === "desktop.inspect") {
+      await this.handleDesktopInspectByConversationId(chatId, userId, action.conversationId);
+      await this.answerCallbackQuery(query.id, `Detalle ${action.conversationId.slice(0, 8)}`);
       return;
     }
 
@@ -539,6 +552,59 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private async handleDesktopInspectCommand(
+    chatId: number,
+    userId: string,
+    text: string,
+  ): Promise<void> {
+    const parts = text.trim().split(/\s+/);
+    const connectorCandidate = parts[1];
+    const secondCandidate = parts[2];
+
+    let connectorId: string | undefined;
+    let conversationReference: string | undefined;
+
+    if (connectorCandidate && secondCandidate) {
+      connectorId = connectorCandidate;
+      conversationReference = secondCandidate;
+    } else if (connectorCandidate) {
+      const exactConnector = this.connectorHub.getDesktopStatus(userId, connectorCandidate);
+      if (exactConnector) {
+        connectorId = connectorCandidate;
+      } else {
+        conversationReference = connectorCandidate;
+      }
+    }
+
+    const status = this.connectorHub.getDesktopStatus(userId, connectorId);
+    if (!status) {
+      await this.sendMessage(chatId, "No encontre un desktop companion activo.");
+      return;
+    }
+
+    const presentation = await this.buildDesktopStatusPresentation(userId, status);
+    const fallbackConversation =
+      presentation.conversationViews.find((conversation) => conversation.awaitingApproval) ??
+      presentation.conversationViews.find((conversation) => conversation.isActive) ??
+      presentation.conversationViews[0];
+
+    const conversation = conversationReference
+      ? await this.resolveDesktopConversation(userId, status, conversationReference)
+      : fallbackConversation;
+
+    if (!conversation) {
+      await this.sendMessage(
+        chatId,
+        conversationReference
+          ? `No encontre la conversacion "${conversationReference}". Usa /desktop_status para ver indices y nombres.`
+          : "No encontre conversaciones Desktop activas.",
+      );
+      return;
+    }
+
+    await this.sendDesktopInspection(chatId, status, presentation, conversation.conversationId);
+  }
+
   private async sendSessionsDigest(chatId: number, userId: string): Promise<void> {
     const sessions = await this.prisma.session.findMany({
       where: {
@@ -687,10 +753,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
           primaryContinueLabel: conversation
             ? `Continuar #${conversation.index}`
             : "Continuar activa",
-          conversations: presentation.conversationViews.slice(0, 4).map((item) => ({
-            conversationId: item.conversationId,
-            label: `#${item.index} ${item.title}`.slice(0, 32),
-          })),
+          conversations: this.buildDesktopConversationButtons(presentation),
         }),
       },
     );
@@ -734,6 +797,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       ]
         .filter(Boolean)
         .join("\n"),
+      {
+        reply_markup: buildDesktopKeyboard(status, {
+          primaryConversationId: conversationId,
+          primaryContinueLabel: conversation
+            ? `Continuar #${conversation.index}`
+            : "Continuar activa",
+          conversations: this.buildDesktopConversationButtons(presentation),
+        }),
+      },
     );
   }
 
@@ -753,12 +825,67 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
             ? "Continuar pendiente"
             : "Continuar activa",
         ...(primaryConversationId ? { primaryConversationId } : {}),
-        conversations: presentation.conversationViews.slice(0, 4).map((conversation) => ({
-          conversationId: conversation.conversationId,
-          label: `#${conversation.index} ${conversation.title}`.slice(0, 32),
-        })),
+        conversations: this.buildDesktopConversationButtons(presentation),
       }),
     });
+  }
+
+  private async handleDesktopInspectByConversationId(
+    chatId: number,
+    userId: string,
+    conversationId: string,
+  ): Promise<void> {
+    const status = this.connectorHub.getDesktopStatus(userId);
+    if (!status) {
+      await this.sendMessage(chatId, "No encontre un desktop companion activo.");
+      return;
+    }
+
+    const presentation = await this.buildDesktopStatusPresentation(userId, status);
+    const conversation = presentation.conversationViews.find(
+      (item) => item.conversationId === conversationId,
+    );
+    if (!conversation) {
+      await this.sendMessage(chatId, "No encontre ese thread en el estado actual.");
+      return;
+    }
+
+    await this.sendDesktopInspection(chatId, status, presentation, conversationId);
+  }
+
+  private async sendDesktopInspection(
+    chatId: number,
+    status: DesktopStatus,
+    presentation: DesktopStatusView,
+    conversationId: string,
+  ): Promise<void> {
+    const conversation = presentation.conversationViews.find(
+      (item) => item.conversationId === conversationId,
+    );
+    if (!conversation) {
+      await this.sendMessage(chatId, "No encontre ese thread en el estado actual.");
+      return;
+    }
+
+    await this.sendMessage(
+      chatId,
+      formatDesktopConversationInspectText(presentation.machineLabel, conversation),
+      {
+        reply_markup: buildDesktopKeyboard(status, {
+          primaryConversationId: conversation.conversationId,
+          primaryContinueLabel: `Continuar #${conversation.index}`,
+          conversations: this.buildDesktopConversationButtons(presentation),
+        }),
+      },
+    );
+  }
+
+  private buildDesktopConversationButtons(presentation: DesktopStatusView) {
+    return presentation.conversationViews.slice(0, 4).map((conversation) => ({
+      conversationId: conversation.conversationId,
+      continueLabel: `#${conversation.index} Continuar`.slice(0, 24),
+      inspectLabel: `#${conversation.index} Ver detalle`.slice(0, 24),
+    }));
   }
 
   private async bindChat(chatId: number): Promise<void> {

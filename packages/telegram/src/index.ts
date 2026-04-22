@@ -41,13 +41,18 @@ export type TelegramAction =
       conversationId?: string;
     }
   | {
+      kind: "desktop.inspect";
+      conversationId: string;
+    }
+  | {
       kind: "desktop.refresh";
       connectorId?: string;
     };
 
 export type DesktopKeyboardConversation = {
   conversationId: string;
-  label: string;
+  continueLabel: string;
+  inspectLabel?: string;
 };
 
 export const buildSessionKeyboard = (sessionId: string): InlineKeyboardMarkup => ({
@@ -101,12 +106,20 @@ export const buildDesktopKeyboard = (
         callback_data: `${status.autopilotEnabled ? "deskautooff" : "deskautoon"}:${status.connectorId}`,
       },
     ],
-    ...(options?.conversations ?? []).map((conversation) => [
-      {
-        text: conversation.label,
-        callback_data: `deskc:${conversation.conversationId}`,
-      },
-    ]),
+    ...(options?.conversations ?? []).map((conversation) =>
+      [
+        {
+          text: conversation.continueLabel,
+          callback_data: `deskc:${conversation.conversationId}`,
+        },
+        conversation.inspectLabel
+          ? {
+              text: conversation.inspectLabel,
+              callback_data: `deski:${conversation.conversationId}`,
+            }
+          : null,
+      ].filter((button): button is InlineButton => button !== null),
+    ),
   ],
 });
 
@@ -181,6 +194,18 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
     return {
       kind: "desktop.command",
       command: "continue_conversation",
+      conversationId,
+    };
+  }
+
+  if (input.startsWith("deski:")) {
+    const conversationId = input.slice("deski:".length);
+    if (!conversationId) {
+      return null;
+    }
+
+    return {
+      kind: "desktop.inspect",
       conversationId,
     };
   }

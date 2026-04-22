@@ -55,6 +55,7 @@ describe("DesktopCompanion", () => {
       conversationId: "conversation-1",
       status: "waiting_manual",
       awaitingApproval: true,
+      lastMessagePreview: "Turn completo en conversation-1. Esperando aprobacion remota.",
     });
 
     companion.setAutopilot(true, 2);

@@ -14,14 +14,22 @@ export type DesktopConversationView = {
   conversationId: string;
   shortId: string;
   title: string;
+  threadLabel: string;
+  projectName: string | undefined;
   folderName: string | undefined;
   workspacePath: string | undefined;
-  contextLine: string | undefined;
-  detailLine: string | undefined;
+  threadLine: string;
+  workspaceLine: string | undefined;
+  summaryLine: string | undefined;
   statusLabel: string;
   isActive: boolean;
   awaitingApproval: boolean;
   commandText: string;
+  inspectCommandText: string;
+  lastTurnStartedAt: string | undefined;
+  lastTurnCompletedAt: string | undefined;
+  lastContinueSentAt: string | undefined;
+  lastContinueMode: DesktopConversation["lastContinueMode"];
 };
 
 export type DesktopStatusView = {
@@ -44,7 +52,7 @@ export const normalizeWorkspacePath = (value?: string): string | undefined => {
 };
 
 const shorten = (value: string, maxLength: number): string =>
-  value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+  value.length <= maxLength ? value : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
 
 const folderNameFromPath = (value?: string): string | undefined => {
   const normalized = normalizeWorkspacePath(value);
@@ -73,6 +81,42 @@ const statusLabel = (conversation: DesktopConversation): string => {
   }
 };
 
+const formatDesktopTimestamp = (value?: string): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("es-CO", {
+    dateStyle: "short",
+    timeStyle: "short",
+    hour12: false,
+  }).format(parsed);
+};
+
+const buildSummaryText = (conversation: DesktopConversation): string | undefined => {
+  const summary =
+    conversation.lastMessagePreview ??
+    conversation.note ??
+    (conversation.status === "running"
+      ? "Turn en progreso."
+      : conversation.status === "waiting_manual"
+        ? "Turn completo. Esperando aprobacion remota."
+        : conversation.status === "auto_continue_sent"
+          ? "Autopilot envio continue."
+          : conversation.status === "manual_continue_sent"
+            ? "Continue manual enviado."
+            : conversation.status === "attention"
+              ? "Thread requiere revision."
+              : undefined);
+
+  return summary ? shorten(summary, 112) : undefined;
+};
+
 const buildConversationLookup = (
   status: DesktopStatus,
   meta: DesktopConnectorMeta,
@@ -87,41 +131,40 @@ const buildConversationLookup = (
     const folderName = folderNameFromPath(workspacePath);
     const project = projects.find((candidate) => candidate.normalizedRepoPath === workspacePath);
     const title = project?.name || folderName || `Thread ${conversation.conversationId.slice(0, 8)}`;
+    const threadLabel = conversation.threadTitle?.trim() || conversation.conversationId.slice(0, 8);
 
     return {
       index: index + 1,
       conversationId: conversation.conversationId,
       shortId: conversation.conversationId.slice(0, 8),
       title,
+      threadLabel,
+      projectName: project?.name,
       folderName,
       workspacePath,
-      contextLine:
+      threadLine: `Thread: ${threadLabel}`,
+      workspaceLine:
         project && folderName && normalizeLookupValue(project.name) !== normalizeLookupValue(folderName)
           ? `Carpeta: ${folderName}`
           : !project && !folderName && workspacePath
-            ? `Ruta: ${shorten(workspacePath, 48)}`
+            ? `Ruta: ${shorten(workspacePath, 64)}`
             : undefined,
-      detailLine:
-        conversation.awaitingApproval || conversation.status === "attention"
-          ? conversation.note
-          : undefined,
+      summaryLine: buildSummaryText(conversation),
       statusLabel: statusLabel(conversation),
       isActive: conversation.isActive,
       awaitingApproval: conversation.awaitingApproval,
       commandText: `/desktop_continue ${index + 1}`,
+      inspectCommandText: `/desktop_inspect ${index + 1}`,
+      lastTurnStartedAt: conversation.lastTurnStartedAt,
+      lastTurnCompletedAt: conversation.lastTurnCompletedAt,
+      lastContinueSentAt: conversation.lastContinueSentAt,
+      lastContinueMode: conversation.lastContinueMode,
     };
   });
 
-  const titleCounts = conversations.reduce(
-    (counts, conversation) => counts.set(conversation.title, (counts.get(conversation.title) ?? 0) + 1),
-    new Map<string, number>(),
-  );
-
   return conversations.map((conversation) => ({
     ...conversation,
-    contextLine:
-      conversation.contextLine ??
-      ((titleCounts.get(conversation.title) ?? 0) > 1 ? `Thread: ${conversation.shortId}` : undefined),
+    summaryLine: rewriteDesktopNote(conversation.summaryLine, conversations),
   }));
 };
 
@@ -171,10 +214,11 @@ export const formatDesktopStatusText = (view: DesktopStatusView): string => {
   const conversationBlocks = view.conversationViews.slice(0, 8).map((conversation) =>
     [
       `#${conversation.index} ${conversation.title}${conversation.isActive ? " | activa" : ""}${conversation.awaitingApproval ? " | requiere accion" : ""}`,
+      conversation.threadLine,
       `Estado: ${conversation.statusLabel}`,
-      conversation.contextLine,
-      conversation.detailLine ? `Detalle: ${rewriteDesktopNote(conversation.detailLine, view.conversationViews)}` : null,
-      `Accion: ${conversation.commandText}`,
+      conversation.summaryLine ? `Ultimo estado: ${conversation.summaryLine}` : null,
+      conversation.workspaceLine,
+      `Acciones: ${conversation.commandText} | ${conversation.inspectCommandText}`,
     ]
       .filter(Boolean)
       .join("\n"),
@@ -190,6 +234,32 @@ export const formatDesktopStatusText = (view: DesktopStatusView): string => {
     .filter((line): line is string => line !== null)
     .join("\n");
 };
+
+export const formatDesktopConversationInspectText = (
+  machineLabel: string,
+  conversation: DesktopConversationView,
+): string =>
+  [
+    `Codex Desktop | ${machineLabel}`,
+    `Thread #${conversation.index} ${conversation.title}`,
+    conversation.threadLine,
+    conversation.workspaceLine,
+    conversation.workspacePath ? `Ruta: ${conversation.workspacePath}` : null,
+    `Estado: ${conversation.statusLabel}`,
+    conversation.summaryLine ? `Ultimo estado: ${conversation.summaryLine}` : null,
+    conversation.lastTurnStartedAt
+      ? `Ultimo turn iniciado: ${formatDesktopTimestamp(conversation.lastTurnStartedAt)}`
+      : null,
+    conversation.lastTurnCompletedAt
+      ? `Ultimo turn completo: ${formatDesktopTimestamp(conversation.lastTurnCompletedAt)}`
+      : null,
+    conversation.lastContinueSentAt
+      ? `Ultimo continue: ${formatDesktopTimestamp(conversation.lastContinueSentAt)}${conversation.lastContinueMode ? ` (${conversation.lastContinueMode})` : ""}`
+      : null,
+    `Acciones: ${conversation.commandText} | ${conversation.inspectCommandText}`,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
 
 export const resolveDesktopConversationReference = (
   status: DesktopStatus,
@@ -224,11 +294,33 @@ export const resolveDesktopConversationReference = (
   const namedMatches = conversationViews.filter((conversation) =>
     [
       conversation.title,
+      conversation.threadLabel,
       conversation.folderName,
       conversation.workspacePath,
       conversation.shortId,
     ].some((value) => value && normalizeLookupValue(value) === normalizedToken),
   );
 
-  return namedMatches.length === 1 ? namedMatches[0] ?? null : null;
+  if (namedMatches.length === 1) {
+    return namedMatches[0] ?? null;
+  }
+
+  const fuzzyMatches = conversationViews.filter((conversation) =>
+    [
+      conversation.title,
+      conversation.threadLabel,
+      conversation.folderName,
+      conversation.workspacePath,
+      conversation.shortId,
+    ].some((value) => {
+      if (!value) {
+        return false;
+      }
+
+      const normalizedValue = normalizeLookupValue(value);
+      return normalizedValue.includes(normalizedToken) || normalizedToken.includes(normalizedValue);
+    }),
+  );
+
+  return fuzzyMatches.length === 1 ? fuzzyMatches[0] ?? null : null;
 };

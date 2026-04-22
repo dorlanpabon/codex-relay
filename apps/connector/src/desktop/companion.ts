@@ -321,7 +321,7 @@ export class DesktopCompanion extends EventEmitter {
       const message = `La conversacion ${conversationId} no esta activa en Codex Desktop. Abrela y reintenta.`;
       conversation.awaitingApproval = true;
       conversation.status = "attention";
-      conversation.note = message;
+      this.setConversationNote(conversation, message);
       this.state.note = message;
       this.recomputeDerivedState();
       this.emitStatus();
@@ -455,7 +455,7 @@ export class DesktopCompanion extends EventEmitter {
         conversation.status = "running";
         conversation.awaitingApproval = false;
         conversation.lastTurnStartedAt = this.now().toISOString();
-        conversation.note = `Turn detectado en ${signal.conversationId}.`;
+        this.setConversationNote(conversation, `Turn detectado en ${signal.conversationId}.`);
         this.state.note = conversation.note;
         this.recomputeDerivedState();
         continue;
@@ -472,7 +472,10 @@ export class DesktopCompanion extends EventEmitter {
       if (!this.state.autopilotEnabled) {
         conversation.awaitingApproval = true;
         conversation.status = "waiting_manual";
-        conversation.note = `Turn completo en ${signal.conversationId}. Esperando aprobacion remota.`;
+        this.setConversationNote(
+          conversation,
+          `Turn completo en ${signal.conversationId}. Esperando aprobacion remota.`,
+        );
         this.state.note = conversation.note;
         this.recomputeDerivedState();
         continue;
@@ -481,8 +484,10 @@ export class DesktopCompanion extends EventEmitter {
       if (conversation.autoContinueCount >= this.state.maxAutoTurns) {
         conversation.awaitingApproval = true;
         conversation.status = "attention";
-        conversation.note =
-          `Autopilot no continuo ${signal.conversationId}: limite ${conversation.autoContinueCount}/${this.state.maxAutoTurns}.`;
+        this.setConversationNote(
+          conversation,
+          `Autopilot no continuo ${signal.conversationId}: limite ${conversation.autoContinueCount}/${this.state.maxAutoTurns}.`,
+        );
         this.state.note = conversation.note;
         this.recomputeDerivedState();
         continue;
@@ -494,8 +499,10 @@ export class DesktopCompanion extends EventEmitter {
       ) {
         conversation.awaitingApproval = true;
         conversation.status = "attention";
-        conversation.note =
-          `Autopilot detecto que ${signal.conversationId} termino, pero no esta activa en Codex Desktop. Abrela y reintenta.`;
+        this.setConversationNote(
+          conversation,
+          `Autopilot detecto que ${signal.conversationId} termino, pero no esta activa en Codex Desktop. Abrela y reintenta.`,
+        );
         this.state.note = conversation.note;
         this.recomputeDerivedState();
         continue;
@@ -560,14 +567,16 @@ export class DesktopCompanion extends EventEmitter {
     if (mode === "autopilot") {
       conversation.autoContinueCount += 1;
     }
-    conversation.note =
+    this.setConversationNote(
+      conversation,
       mode === "autopilot"
         ? delivery === "restore"
           ? `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} con fallback visible.`
           : `Autopilot envio continue a ${conversation.conversationId} ${conversation.autoContinueCount}/${this.state.maxAutoTurns} sin restaurar ventana.`
         : delivery === "restore"
           ? `Continue manual enviado a ${conversation.conversationId} con fallback visible.`
-          : `Continue manual enviado a ${conversation.conversationId} sin restaurar ventana.`;
+          : `Continue manual enviado a ${conversation.conversationId} sin restaurar ventana.`,
+    );
     this.setActiveConversation(conversation.conversationId);
     this.state.note = conversation.note;
   }
@@ -579,12 +588,22 @@ export class DesktopCompanion extends EventEmitter {
   ): void {
     conversation.awaitingApproval = true;
     conversation.status = "attention";
-    conversation.note =
+    this.setConversationNote(
+      conversation,
       mode === "autopilot"
         ? `Autopilot no pudo continuar ${conversation.conversationId}: ${reason}`
-        : `No pude continuar ${conversation.conversationId}: ${reason}`;
+        : `No pude continuar ${conversation.conversationId}: ${reason}`,
+    );
     this.state.note = conversation.note;
     this.recomputeDerivedState();
+  }
+
+  private setConversationNote(
+    conversation: ConversationRuntimeState,
+    note: string,
+  ): void {
+    conversation.note = note;
+    conversation.lastMessagePreview = note;
   }
 
   private recomputeDerivedState(): void {
