@@ -272,68 +272,107 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (action.kind === "open") {
-      await this.sendMessage(
-        chatId,
-        `${this.config.WEB_BASE_URL}/sessions/${action.sessionId}`,
-      );
-      await this.answerCallbackQuery(query.id, "Abriendo panel");
-      return;
-    }
+    let callbackAnswered = false;
+    const answer = async (text: string) => {
+      if (callbackAnswered) {
+        return;
+      }
 
-    if (action.kind === "approval") {
+      callbackAnswered = true;
+      await this.answerCallbackQuery(query.id, text);
+    };
+
+    try {
+      if (action.kind === "open") {
+        await answer("Abriendo panel");
+        await this.sendMessage(
+          chatId,
+          `${this.config.WEB_BASE_URL}/sessions/${action.sessionId}`,
+        );
+        return;
+      }
+
+      if (action.kind === "approval") {
+        await answer(`Approval ${action.decision}`);
+        await this.issueCommand(userId, {
+          sessionId: action.sessionId,
+          command: "approve_once",
+          approvalId: action.approvalId,
+          decision: action.decision,
+        });
+        return;
+      }
+
+      if (action.kind === "desktop.inspect") {
+        await answer(`Detalle ${action.conversationId.slice(0, 8)}`);
+        await this.handleDesktopInspectByConversationId(chatId, userId, action.conversationId);
+        return;
+      }
+
+      if (action.kind === "desktop.command") {
+        if (action.command === "continue_conversation" && action.conversationId) {
+          const status = this.connectorHub.getDesktopStatus(userId, action.connectorId);
+          const presentation = status
+            ? await this.buildDesktopStatusPresentation(userId, status, "all")
+            : null;
+          const conversation = presentation?.conversationViews.find((item) =>
+            item.sourceConversationIds.includes(action.conversationId!),
+          );
+
+          if (conversation && !this.canContinueDesktopConversation(conversation)) {
+            await answer("Ese thread no esta activo en Codex Desktop");
+            await this.sendMessage(
+              chatId,
+              [
+                `No puedo continuar #${conversation.index} ${conversation.title} desde Telegram porque ese thread no esta activo en Codex Desktop.`,
+                "Abre ese thread en el PC y luego usa el boton del thread activo o /desktop_continue.",
+              ].join("\n"),
+            );
+            return;
+          }
+        }
+
+        await answer(
+          action.conversationId
+            ? `Enviando continue ${action.conversationId.slice(0, 8)}`
+            : `Desktop ${action.command} enviado`,
+        );
+        await this.issueDesktopCommand(userId, {
+          command: action.command,
+          ...(action.connectorId ? { connectorId: action.connectorId } : {}),
+          ...(action.conversationId ? { conversationId: action.conversationId } : {}),
+        });
+        return;
+      }
+
+      if (action.kind === "desktop.refresh") {
+        await answer("Estado actualizado");
+        await this.handleDesktopStatusCommand(
+          chatId,
+          userId,
+          [
+            "/desktop_status",
+            action.connectorId,
+            action.filter && action.filter !== "priority" ? action.filter : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+        return;
+      }
+
+      await answer(`Comando ${action.command} enviado`);
       await this.issueCommand(userId, {
         sessionId: action.sessionId,
-        command: "approve_once",
-        approvalId: action.approvalId,
-        decision: action.decision,
-      });
-      await this.answerCallbackQuery(query.id, `Approval ${action.decision}`);
-      return;
-    }
-
-    if (action.kind === "desktop.inspect") {
-      await this.handleDesktopInspectByConversationId(chatId, userId, action.conversationId);
-      await this.answerCallbackQuery(query.id, `Detalle ${action.conversationId.slice(0, 8)}`);
-      return;
-    }
-
-    if (action.kind === "desktop.command") {
-      await this.issueDesktopCommand(userId, {
         command: action.command,
-        ...(action.connectorId ? { connectorId: action.connectorId } : {}),
-        ...(action.conversationId ? { conversationId: action.conversationId } : {}),
       });
-      await this.answerCallbackQuery(
-        query.id,
-        action.conversationId
-          ? `Desktop ${action.command} ${action.conversationId.slice(0, 8)}`
-          : `Desktop ${action.command} enviado`,
-      );
-      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Error inesperado";
+      if (!callbackAnswered) {
+        await this.tryAnswerCallbackQuery(query.id, this.formatCallbackError(message));
+      }
+      await this.sendMessage(chatId, `No pude ejecutar la accion: ${message}`);
     }
-
-    if (action.kind === "desktop.refresh") {
-      await this.handleDesktopStatusCommand(
-        chatId,
-        userId,
-        [
-          "/desktop_status",
-          action.connectorId,
-          action.filter && action.filter !== "priority" ? action.filter : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
-      await this.answerCallbackQuery(query.id, "Estado actualizado");
-      return;
-    }
-
-    await this.issueCommand(userId, {
-      sessionId: action.sessionId,
-      command: action.command,
-    });
-    await this.answerCallbackQuery(query.id, `Comando ${action.command} enviado`);
   }
 
   private async handleRunCommand(
@@ -745,6 +784,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const conversation = presentation.conversationViews.find((item) =>
       item.sourceConversationIds.includes(conversationId),
     );
+    const primaryConversation = this.pickDesktopPrimaryConversation(
+      presentation,
+      status.activeConversationId,
+    );
 
     await this.sendMessage(
       Number(user.telegramChatId),
@@ -760,10 +803,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         .join("\n"),
       {
         reply_markup: buildDesktopKeyboard(status, {
-          primaryConversationId: conversationId,
+          ...(primaryConversation
+            ? { primaryConversationId: primaryConversation.conversationId }
+            : {}),
           statusFilter: presentation.filter,
-          primaryContinueLabel: conversation
-            ? this.buildDesktopPrimaryContinueLabel(conversation)
+          primaryContinueLabel: primaryConversation
+            ? this.buildDesktopPrimaryContinueLabel(primaryConversation)
             : "Continuar activa",
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
@@ -800,6 +845,10 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     const conversation = presentation.conversationViews.find((item) =>
       item.sourceConversationIds.includes(conversationId),
     );
+    const primaryConversation = this.pickDesktopPrimaryConversation(
+      presentation,
+      status.activeConversationId,
+    );
 
     await this.sendMessage(
       Number(user.telegramChatId),
@@ -815,10 +864,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         .join("\n"),
       {
         reply_markup: buildDesktopKeyboard(status, {
-          primaryConversationId: conversationId,
+          ...(primaryConversation
+            ? { primaryConversationId: primaryConversation.conversationId }
+            : {}),
           statusFilter: presentation.filter,
-          primaryContinueLabel: conversation
-            ? this.buildDesktopPrimaryContinueLabel(conversation)
+          primaryContinueLabel: primaryConversation
+            ? this.buildDesktopPrimaryContinueLabel(primaryConversation)
             : "Continuar activa",
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
@@ -833,24 +884,18 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     filter: DesktopStatusFilter = "priority",
   ): Promise<void> {
     const presentation = await this.buildDesktopStatusPresentation(userId, status, filter);
-    const primaryConversationId =
-      presentation.conversationViews.find((conversation) => conversation.awaitingApproval)
-        ?.conversationId ?? status.activeConversationId;
+    const primaryConversation = this.pickDesktopPrimaryConversation(
+      presentation,
+      status.activeConversationId,
+    );
     await this.sendMessage(chatId, formatDesktopStatusText(presentation), {
       parse_mode: "HTML",
       reply_markup: buildDesktopKeyboard(status, {
         statusFilter: presentation.filter,
-        primaryContinueLabel:
-          presentation.conversationViews.find((conversation) => conversation.awaitingApproval)
-            ? this.buildDesktopPrimaryContinueLabel(
-                presentation.conversationViews.find((conversation) => conversation.awaitingApproval)!,
-              )
-            : presentation.conversationViews.find((conversation) => conversation.isActive)
-              ? this.buildDesktopPrimaryContinueLabel(
-                  presentation.conversationViews.find((conversation) => conversation.isActive)!,
-                )
-              : "Continuar activa",
-        ...(primaryConversationId ? { primaryConversationId } : {}),
+        primaryContinueLabel: primaryConversation
+          ? this.buildDesktopPrimaryContinueLabel(primaryConversation)
+          : "Continuar activa",
+        ...(primaryConversation ? { primaryConversationId: primaryConversation.conversationId } : {}),
         conversations: this.buildDesktopConversationButtons(presentation),
       }),
     });
@@ -893,6 +938,11 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const primaryConversation = this.pickDesktopPrimaryConversation(
+      presentation,
+      status.activeConversationId,
+    );
+
     await this.sendMessage(
       chatId,
       formatDesktopConversationInspectText(presentation.machineLabel, conversation),
@@ -900,8 +950,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
         parse_mode: "HTML",
         reply_markup: buildDesktopKeyboard(status, {
           statusFilter: presentation.filter,
-          primaryConversationId: conversation.conversationId,
-          primaryContinueLabel: this.buildDesktopPrimaryContinueLabel(conversation),
+          ...(primaryConversation
+            ? {
+                primaryConversationId: primaryConversation.conversationId,
+                primaryContinueLabel: this.buildDesktopPrimaryContinueLabel(primaryConversation),
+              }
+            : {
+                primaryContinueLabel: "Continuar activa",
+              }),
           conversations: this.buildDesktopConversationButtons(presentation),
         }),
       },
@@ -912,13 +968,32 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     return presentation.conversationViews.slice(0, 4).map((conversation) => ({
       conversationId: conversation.conversationId,
       contextLabel: this.buildDesktopContextLabel(conversation).slice(0, 52),
-      continueLabel: this.buildDesktopActionLabel("Continuar", conversation, 30),
+      ...(this.canContinueDesktopConversation(conversation)
+        ? { continueLabel: this.buildDesktopActionLabel("Continuar", conversation, 30) }
+        : {}),
       inspectLabel: this.buildDesktopActionLabel("Detalle", conversation, 28),
     }));
   }
 
   private buildDesktopPrimaryContinueLabel(conversation: DesktopStatusView["conversationViews"][number]) {
     return this.buildDesktopActionLabel("Continuar", conversation, 32);
+  }
+
+  private canContinueDesktopConversation(
+    conversation: DesktopStatusView["conversationViews"][number],
+  ): boolean {
+    return conversation.isActive;
+  }
+
+  private pickDesktopPrimaryConversation(
+    presentation: DesktopStatusView,
+    activeConversationId?: string,
+  ): DesktopStatusView["conversationViews"][number] | undefined {
+    return (
+      presentation.conversationViews.find((conversation) =>
+        conversation.sourceConversationIds.includes(activeConversationId ?? ""),
+      ) ?? presentation.conversationViews.find((conversation) => conversation.isActive)
+    );
   }
 
   private buildDesktopContextLabel(conversation: DesktopStatusView["conversationViews"][number]) {
@@ -1010,6 +1085,20 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       callback_query_id: id,
       text,
     });
+  }
+
+  private async tryAnswerCallbackQuery(id: string, text: string): Promise<void> {
+    try {
+      await this.answerCallbackQuery(id, text);
+    } catch (error) {
+      this.telemetry.warn("Telegram callback answer failed", {
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
+    }
+  }
+
+  private formatCallbackError(message: string): string {
+    return message.length <= 120 ? message : `${message.slice(0, 117)}...`;
   }
 
   private async buildDesktopStatusPresentation(

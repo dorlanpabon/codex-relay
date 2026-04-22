@@ -55,7 +55,7 @@ export type TelegramAction =
 export type DesktopKeyboardConversation = {
   conversationId: string;
   contextLabel?: string;
-  continueLabel: string;
+  continueLabel?: string;
   inspectLabel?: string;
 };
 
@@ -119,10 +119,12 @@ export const buildDesktopKeyboard = (
         ? [[{ text: conversation.contextLabel, callback_data: `deski:${conversation.conversationId}` }]]
         : []),
       [
-        {
-          text: conversation.continueLabel,
-          callback_data: `deskc:${conversation.conversationId}`,
-        },
+        conversation.continueLabel
+          ? {
+              text: conversation.continueLabel,
+              callback_data: `deskc:${conversation.conversationId}`,
+            }
+          : null,
         conversation.inspectLabel
           ? {
               text: conversation.inspectLabel,

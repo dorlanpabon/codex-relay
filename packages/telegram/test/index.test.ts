@@ -35,6 +35,32 @@ describe("@codex-relay/telegram", () => {
     expect(keyboard.inline_keyboard[0]?.[0]?.callback_data.length).toBeLessThanOrEqual(64);
   });
 
+  it("omits continue button when a desktop thread is not continuable", () => {
+    const keyboard = buildDesktopKeyboard(
+      {
+        connectorId: "connector-1",
+        autopilotEnabled: false,
+      },
+      {
+        conversations: [
+          {
+            conversationId: "conversation-2",
+            contextLabel: "#2 orders_codex | pendiente",
+            inspectLabel: "Detalle orders_codex",
+          },
+        ],
+      },
+    );
+
+    expect(keyboard.inline_keyboard[2]?.[0]?.callback_data).toBe("deski:conversation-2");
+    expect(keyboard.inline_keyboard[3]).toEqual([
+      {
+        text: "Detalle orders_codex",
+        callback_data: "deski:conversation-2",
+      },
+    ]);
+  });
+
   it("parses desktop callbacks with conversationId", () => {
     expect(parseCallbackData("deskc:conversation-1")).toEqual({
       kind: "desktop.command",
