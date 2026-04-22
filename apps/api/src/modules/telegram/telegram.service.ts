@@ -16,6 +16,7 @@ import { ConnectorHubService } from "../connectors/connector-hub.service.js";
 import { PrismaService } from "../prisma/prisma.service.js";
 import { TelemetryService } from "../telemetry/telemetry.service.js";
 import { TasksService } from "../tasks/tasks.service.js";
+import { normalizeTelegramCommandInput } from "./command-normalizer.js";
 
 type TelegramUpdate = {
   update_id: number;
@@ -170,7 +171,9 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async handleMessage(chatId: number, text: string): Promise<void> {
-    if (text.startsWith("/start")) {
+    const normalizedText = normalizeTelegramCommandInput(text);
+
+    if (normalizedText.startsWith("/start")) {
       await this.bindChat(chatId);
       await this.sendMessage(
         chatId,
@@ -190,48 +193,48 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    if (text === "/sessions") {
+    if (normalizedText === "/sessions") {
       await this.sendSessionsDigest(chatId, userId);
       return;
     }
 
-    if (text.startsWith("/desktop_status")) {
-      await this.handleDesktopStatusCommand(chatId, userId, text);
+    if (normalizedText.startsWith("/desktop_status")) {
+      await this.handleDesktopStatusCommand(chatId, userId, normalizedText);
       return;
     }
 
-    if (text.startsWith("/desktop_continue")) {
-      await this.handleDesktopCommand(chatId, userId, text, "continue_active");
+    if (normalizedText.startsWith("/desktop_continue")) {
+      await this.handleDesktopCommand(chatId, userId, normalizedText, "continue_active");
       return;
     }
 
-    if (text.startsWith("/desktop_auto_on")) {
-      await this.handleDesktopCommand(chatId, userId, text, "autopilot_on");
+    if (normalizedText.startsWith("/desktop_auto_on")) {
+      await this.handleDesktopCommand(chatId, userId, normalizedText, "autopilot_on");
       return;
     }
 
-    if (text.startsWith("/desktop_auto_off")) {
-      await this.handleDesktopCommand(chatId, userId, text, "autopilot_off");
+    if (normalizedText.startsWith("/desktop_auto_off")) {
+      await this.handleDesktopCommand(chatId, userId, normalizedText, "autopilot_off");
       return;
     }
 
-    if (text.startsWith("/run ")) {
-      await this.handleRunCommand(chatId, userId, text);
+    if (normalizedText.startsWith("/run ")) {
+      await this.handleRunCommand(chatId, userId, normalizedText);
       return;
     }
 
-    if (text.startsWith("/continue ")) {
-      await this.handleDirectSessionCommand(chatId, userId, text, "continue");
+    if (normalizedText.startsWith("/continue ")) {
+      await this.handleDirectSessionCommand(chatId, userId, normalizedText, "continue");
       return;
     }
 
-    if (text.startsWith("/pause ")) {
-      await this.handleDirectSessionCommand(chatId, userId, text, "pause");
+    if (normalizedText.startsWith("/pause ")) {
+      await this.handleDirectSessionCommand(chatId, userId, normalizedText, "pause");
       return;
     }
 
-    if (text.startsWith("/abort ")) {
-      await this.handleDirectSessionCommand(chatId, userId, text, "abort");
+    if (normalizedText.startsWith("/abort ")) {
+      await this.handleDirectSessionCommand(chatId, userId, normalizedText, "abort");
       return;
     }
 
