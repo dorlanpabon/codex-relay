@@ -32,7 +32,7 @@ export type TelegramAction =
     }
   | {
       kind: "desktop.command";
-      connectorId: string;
+      connectorId?: string;
       command:
         | "continue_active"
         | "continue_conversation"
@@ -74,7 +74,7 @@ export const buildDesktopKeyboard = (
       {
         text: conversationId ? `Continuar ${conversationId.slice(0, 8)}` : "Continuar Desktop",
         callback_data: conversationId
-          ? `deskcontinue:${status.connectorId}:${conversationId}`
+          ? `deskc:${conversationId}`
           : `deskcontinue:${status.connectorId}`,
       },
     ],
@@ -130,7 +130,7 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
   }
 
   if (input.startsWith("deskcontinue:")) {
-    const [, connectorId, conversationId] = input.split(":");
+    const [, connectorId] = input.split(":");
     if (!connectorId) {
       return null;
     }
@@ -138,8 +138,20 @@ export const parseCallbackData = (input: string): TelegramAction | null => {
     return {
       kind: "desktop.command",
       connectorId,
-      command: conversationId ? "continue_conversation" : "continue_active",
-      ...(conversationId ? { conversationId } : {}),
+      command: "continue_active",
+    };
+  }
+
+  if (input.startsWith("deskc:")) {
+    const conversationId = input.slice("deskc:".length);
+    if (!conversationId) {
+      return null;
+    }
+
+    return {
+      kind: "desktop.command",
+      command: "continue_conversation",
+      conversationId,
     };
   }
 

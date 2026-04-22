@@ -1,29 +1,21 @@
 const stripBotMention = (token: string): string => token.replace(/@[\w_]+$/i, "");
 
-const DESKTOP_HEAD_ALIASES = new Set(["/desktop", "/destktop"]);
+const DESKTOP_HEAD_ALIASES = new Set(["/desktop"]);
 const DIRECT_ALIASES = new Map<string, string>([
   ["/start", "/start"],
   ["/sessions", "/sessions"],
   ["/desktop_status", "/desktop_status"],
   ["/desktop-status", "/desktop_status"],
   ["/desktopstatus", "/desktop_status"],
-  ["/destktop_status", "/desktop_status"],
-  ["/destktop-status", "/desktop_status"],
-  ["/destktopstatus", "/desktop_status"],
   ["/desktop_continue", "/desktop_continue"],
   ["/desktop-continue", "/desktop_continue"],
   ["/desktopcontinue", "/desktop_continue"],
-  ["/destktop_continue", "/desktop_continue"],
-  ["/destktop-continue", "/desktop_continue"],
-  ["/destktopcontinue", "/desktop_continue"],
   ["/desktop_auto_on", "/desktop_auto_on"],
   ["/desktop-auto-on", "/desktop_auto_on"],
   ["/desktopautoon", "/desktop_auto_on"],
-  ["/destktop_auto_on", "/desktop_auto_on"],
   ["/desktop_auto_off", "/desktop_auto_off"],
   ["/desktop-auto-off", "/desktop_auto_off"],
   ["/desktopautooff", "/desktop_auto_off"],
-  ["/destktop_auto_off", "/desktop_auto_off"],
   ["/run", "/run"],
   ["/continue", "/continue"],
   ["/pause", "/pause"],

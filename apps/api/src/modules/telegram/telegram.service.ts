@@ -284,8 +284,8 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
 
     if (action.kind === "desktop.command") {
       await this.issueDesktopCommand(userId, {
-        connectorId: action.connectorId,
         command: action.command,
+        ...(action.connectorId ? { connectorId: action.connectorId } : {}),
         ...(action.conversationId ? { conversationId: action.conversationId } : {}),
       });
       await this.answerCallbackQuery(
@@ -779,11 +779,14 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       },
     );
 
+    const bodyText = await response.text();
     if (!response.ok) {
-      throw new Error(`Telegram API ${method} failed with ${response.status}`);
+      throw new Error(
+        `Telegram API ${method} failed with ${response.status}: ${bodyText || "empty_response"}`,
+      );
     }
 
-    return response.json() as Promise<T>;
+    return JSON.parse(bodyText) as T;
   }
 }
 

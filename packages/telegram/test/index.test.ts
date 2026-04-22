@@ -12,15 +12,13 @@ describe("@codex-relay/telegram", () => {
       "conversation-1",
     );
 
-    expect(keyboard.inline_keyboard[0]?.[0]?.callback_data).toBe(
-      "deskcontinue:connector-1:conversation-1",
-    );
+    expect(keyboard.inline_keyboard[0]?.[0]?.callback_data).toBe("deskc:conversation-1");
+    expect(keyboard.inline_keyboard[0]?.[0]?.callback_data.length).toBeLessThanOrEqual(64);
   });
 
   it("parses desktop callbacks with conversationId", () => {
-    expect(parseCallbackData("deskcontinue:connector-1:conversation-1")).toEqual({
+    expect(parseCallbackData("deskc:conversation-1")).toEqual({
       kind: "desktop.command",
-      connectorId: "connector-1",
       command: "continue_conversation",
       conversationId: "conversation-1",
     });
